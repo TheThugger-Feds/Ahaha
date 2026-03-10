@@ -1,7 +1,7 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 -- REPLACEMENT: Use your RAW GitHub link for the TaxiAutoFarm.lua file here
-local TaxiFarmURL = "https://raw.githubusercontent.com/TheThugger-Feds/Bloxburg-script/main/TaxiAutoFarm.lua"
+local TaxiFarmURL = "https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/refs/heads/main/TaxiAutoFarm.lua"
 
 local Window = Rayfield:CreateWindow({
     Name = "AhahaBurg",
