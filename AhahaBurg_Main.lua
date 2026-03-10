@@ -1,6 +1,5 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
--- Your RAW GitHub link for the logic script
 local TaxiFarmURL = "https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/refs/heads/main/TaxiAutoFarm.lua"
 
 local Window = Rayfield:CreateWindow({
@@ -16,34 +15,28 @@ local Window = Rayfield:CreateWindow({
     KeySettings = {
        Title = "AhahaBurg | Key System",
        Subtitle = "Enter the key to continue",
-       Note = "Complete the checkpoints to get your key!",
+       Note = "Get your key from the link below!",
        FileName = "AhahaBurgKey", 
        SaveKey = true, 
-       GrabKeyFromSite = true, -- Now set to true to fetch keys from your link
-       Key = {"https://your-raw-pastebin-or-github-link-with-keys.txt"}, -- REPLACE THIS with a link to a txt file containing valid keys
+       GrabKeyFromSite = true, 
+       Key = {"https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/main/keys.txt"}, 
        Actions = {
             [1] = {
                 Name = "Get Key",
                 Callback = function()
-                    -- This link opens Panda and includes the player's HWID
-                    local KeyLink = "https://new.pandadevelopment.net/getkey/ahahaburg?hwid=" .. game:GetService("RbxAnalyticsService"):GetClientId()
-                    
-                    -- Copies to clipboard since Roblox has restrictions on opening browser tabs
+                    local HWID = game:GetService("RbxAnalyticsService"):GetClientId()
+                    local KeyLink = "https://new.pandadevelopment.net/getkey/ahahaburg?hwid=" .. HWID
                     setclipboard(KeyLink)
-                    
                     Rayfield:Notify({
                         Title = "Key System",
-                        Content = "Panda link copied to clipboard! Paste it in your browser.",
+                        Content = "Panda link copied to clipboard!",
                         Duration = 5,
-                        Image = 4483362458,
                     })
                 end
             }
        }
     }
 })
-
---- [[ TABS & SECTIONS ]] ---
 
 local FarmTab = Window:CreateTab("Autofarm", 4483362458) 
 local TaxiSection = FarmTab:CreateSection("Taxi Driver Farm")
@@ -54,19 +47,16 @@ local TaxiToggle = FarmTab:CreateToggle({
    Flag = "TaxiToggle", 
    Callback = function(Value)
       _G.TaxiToggle = Value
-      if Value then
-          if not _G.TaxiBotInitiated then
-              -- Pulls the obfuscated/clean code from your GitHub
-              loadstring(game:HttpGet(TaxiFarmURL))()
-              _G.TaxiBotInitiated = true
-          end
+      if Value and not _G.TaxiBotInitiated then
+          loadstring(game:HttpGet(TaxiFarmURL))()
+          _G.TaxiBotInitiated = true
       end
    end,
 })
 
 local FarmSpeedSlider = FarmTab:CreateSlider({
    Name = "Farm Speed",
-   Info = "Adjusts movement speed in real-time.",
+   Info = "Adjusts movement speed.",
    Range = {16, 100},
    Increment = 1,
    Suffix = " studs/sec",
