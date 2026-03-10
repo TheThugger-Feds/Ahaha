@@ -21,7 +21,7 @@ local Window = Rayfield:CreateWindow({
        SaveKey = true, 
        GrabKeyFromSite = true, 
        -- Replace YOUR_LINK_ID with your first LootLabs link ID
-       Key = {"https://loot-link.com/s?YOUR_LINK_ID&hwid=" .. game:GetService("RbxAnalyticsService"):GetClientId()} 
+       Key = {"https://new.pandadevelopment.net/getkey/ahahaburg?hwid=" .. game:GetService("RbxAnalyticsService"):GetClientId()} 
     }
 })
 
