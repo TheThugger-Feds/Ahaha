@@ -15,31 +15,27 @@ local Window = Rayfield:CreateWindow({
     KeySettings = {
        Title = "AhahaBurg | Key System",
        Subtitle = "Enter the key to continue",
-       Note = "Complete the Panda checkpoints to get your key!",
+       -- I put the link here so it's ALWAYS visible on your screen
+       Note = "Link: new.pandadevelopment.net/getkey/ahahaburg", 
        FileName = "AhahaBurgKey", 
        SaveKey = true, 
-       GrabKeyFromSite = false, -- DISABLED to fix the 404 error
-       Key = {"Ahaha_Success"}, -- REPLACE "Ahaha_Success" with your Panda Key
+       GrabKeyFromSite = false, 
+       Key = {"Ahaha_Success"}, -- This is the key they must type to enter
        Actions = {
             [1] = {
-                Name = "Get Key",
+                Name = "Get Key (Copy Link)",
                 Callback = function()
                     local HWID = game:GetService("RbxAnalyticsService"):GetClientId()
-                    local KeyLink = "https://new.pandadevelopment.net/getkey/ahahaburg?hwid=" .. HWID
-                    setclipboard(KeyLink)
-                    Rayfield:Notify({
-                        Title = "Key System",
-                        Content = "Panda link copied to clipboard! Paste it in your browser.",
-                        Duration = 5,
-                    })
+                    setclipboard("https://new.pandadevelopment.net/getkey/ahahaburg?hwid=" .. HWID)
                 end
             }
        }
     }
 })
 
+--- [[ TABS ]] ---
+
 local FarmTab = Window:CreateTab("Autofarm", 4483362458) 
-local TaxiSection = FarmTab:CreateSection("Taxi Driver Farm")
 
 local TaxiToggle = FarmTab:CreateToggle({
    Name = "Enable Taxi Farm",
@@ -56,10 +52,8 @@ local TaxiToggle = FarmTab:CreateToggle({
 
 local FarmSpeedSlider = FarmTab:CreateSlider({
    Name = "Farm Speed",
-   Info = "Adjusts movement speed.",
    Range = {16, 100},
    Increment = 1,
-   Suffix = " studs/sec",
    CurrentValue = 36,
    Flag = "TaxiSpeed", 
    Callback = function(Value)
