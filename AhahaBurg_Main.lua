@@ -1,6 +1,6 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
--- REPLACEMENT: Use your RAW GitHub link for the TaxiAutoFarm.lua file here
+-- Your RAW GitHub link for the logic script
 local TaxiFarmURL = "https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/refs/heads/main/TaxiAutoFarm.lua"
 
 local Window = Rayfield:CreateWindow({
@@ -16,14 +16,34 @@ local Window = Rayfield:CreateWindow({
     KeySettings = {
        Title = "AhahaBurg | Key System",
        Subtitle = "Enter the key to continue",
-       Note = "Complete the checkpoints!",
+       Note = "Complete the checkpoints to get your key!",
        FileName = "AhahaBurgKey", 
        SaveKey = true, 
-       GrabKeyFromSite = true, 
-       -- Replace YOUR_LINK_ID with your first LootLabs link ID
-       Key = {"https://new.pandadevelopment.net/getkey/ahahaburg?hwid=" .. game:GetService("RbxAnalyticsService"):GetClientId()} 
+       GrabKeyFromSite = true, -- Now set to true to fetch keys from your link
+       Key = {"https://your-raw-pastebin-or-github-link-with-keys.txt"}, -- REPLACE THIS with a link to a txt file containing valid keys
+       Actions = {
+            [1] = {
+                Name = "Get Key",
+                Callback = function()
+                    -- This link opens Panda and includes the player's HWID
+                    local KeyLink = "https://new.pandadevelopment.net/getkey/ahahaburg?hwid=" .. game:GetService("RbxAnalyticsService"):GetClientId()
+                    
+                    -- Copies to clipboard since Roblox has restrictions on opening browser tabs
+                    setclipboard(KeyLink)
+                    
+                    Rayfield:Notify({
+                        Title = "Key System",
+                        Content = "Panda link copied to clipboard! Paste it in your browser.",
+                        Duration = 5,
+                        Image = 4483362458,
+                    })
+                end
+            }
+       }
     }
 })
+
+--- [[ TABS & SECTIONS ]] ---
 
 local FarmTab = Window:CreateTab("Autofarm", 4483362458) 
 local TaxiSection = FarmTab:CreateSection("Taxi Driver Farm")
@@ -35,8 +55,8 @@ local TaxiToggle = FarmTab:CreateToggle({
    Callback = function(Value)
       _G.TaxiToggle = Value
       if Value then
-          -- Checks if the bot code is already loaded; if not, it pulls it from GitHub
           if not _G.TaxiBotInitiated then
+              -- Pulls the obfuscated/clean code from your GitHub
               loadstring(game:HttpGet(TaxiFarmURL))()
               _G.TaxiBotInitiated = true
           end
