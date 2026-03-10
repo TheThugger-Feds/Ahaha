@@ -1,13 +1,7 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
--- GET THE USER'S HWID FOR PANDA AUTH
-local HWID = game:GetService("RbxAnalyticsService"):GetClientId()
-
--- REPLACE THIS WITH YOUR FIRST LOOTLABS LINK
-local KeyLink = "https://loot-link.com/s?YOUR_LINK_1_ID&hwid=" .. HWID
-
--- REPLACE THIS WITH THE RAW GITHUB LINK TO YOUR TAXI FARM SCRIPT
-local TaxiLogicURL = "https://raw.githubusercontent.com/TheThugger-Feds/Bloxburg-script/main/TaxiBot_v4_Fixed.lua"
+-- REPLACEMENT: Use your RAW GitHub link for the TaxiAutoFarm.lua file here
+local TaxiFarmURL = "https://raw.githubusercontent.com/TheThugger-Feds/Bloxburg-script/main/TaxiAutoFarm.lua"
 
 local Window = Rayfield:CreateWindow({
     Name = "AhahaBurg",
@@ -16,28 +10,22 @@ local Window = Rayfield:CreateWindow({
     ConfigurationSaving = {
        Enabled = true,
        FolderName = "AhahaBurg_Configs",
-       FileName = "MainConfig"
-    },
-    Discord = {
-       Enabled = true,
-       Invite = "YOUR_DISCORD_INVITE", -- Put just the code, e.g. "abcd"
-       RememberJoins = true
+       FileName = "MainUI"
     },
     KeySystem = true,
     KeySettings = {
        Title = "AhahaBurg | Key System",
        Subtitle = "Enter the key to continue",
-       Note = "Checkpoints required for the key!",
-       FileName = "AhahaBurgKey",
-       SaveKey = true,
-       GrabKeyFromSite = false,
-       Key = {KeyLink} -- This makes the 'Get Key' button open your link
+       Note = "Complete the checkpoints!",
+       FileName = "AhahaBurgKey", 
+       SaveKey = true, 
+       GrabKeyFromSite = true, 
+       -- Replace YOUR_LINK_ID with your first LootLabs link ID
+       Key = {"https://loot-link.com/s?YOUR_LINK_ID&hwid=" .. game:GetService("RbxAnalyticsService"):GetClientId()} 
     }
 })
 
--- AUTO FARM TAB
 local FarmTab = Window:CreateTab("Autofarm", 4483362458) 
-
 local TaxiSection = FarmTab:CreateSection("Taxi Driver Farm")
 
 local TaxiToggle = FarmTab:CreateToggle({
@@ -45,23 +33,25 @@ local TaxiToggle = FarmTab:CreateToggle({
    CurrentValue = false,
    Flag = "TaxiToggle", 
    Callback = function(Value)
+      _G.TaxiToggle = Value
       if Value then
-          _G.StopTaxiFarm = false
-          loadstring(game:HttpGet(TaxiLogicURL))()
-      else
-          _G.StopTaxiFarm = true -- Your Taxi script should check this to stop loops
+          -- Checks if the bot code is already loaded; if not, it pulls it from GitHub
+          if not _G.TaxiBotInitiated then
+              loadstring(game:HttpGet(TaxiFarmURL))()
+              _G.TaxiBotInitiated = true
+          end
       end
    end,
 })
 
 local FarmSpeedSlider = FarmTab:CreateSlider({
    Name = "Farm Speed",
-   Info = "Changes the movement speed of the autonomous taxi.",
+   Info = "Adjusts movement speed in real-time.",
    Range = {16, 100},
    Increment = 1,
    Suffix = " studs/sec",
-   CurrentValue = 20,
-   Flag = "SpeedSlider", 
+   CurrentValue = 36,
+   Flag = "TaxiSpeed", 
    Callback = function(Value)
       _G.TaxiFarmSpeed = Value
    end,
