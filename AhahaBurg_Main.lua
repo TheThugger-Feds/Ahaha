@@ -15,11 +15,11 @@ local Window = Rayfield:CreateWindow({
     KeySettings = {
        Title = "AhahaBurg | Key System",
        Subtitle = "Enter the key to continue",
-       Note = "Get your key from the link below!",
+       Note = "Complete the Panda checkpoints to get your key!",
        FileName = "AhahaBurgKey", 
        SaveKey = true, 
-       GrabKeyFromSite = true, 
-       Key = {"https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/main/keys.txt"}, 
+       GrabKeyFromSite = false, -- DISABLED to fix the 404 error
+       Key = {"Ahaha_Success"}, -- REPLACE "Ahaha_Success" with your Panda Key
        Actions = {
             [1] = {
                 Name = "Get Key",
@@ -29,7 +29,7 @@ local Window = Rayfield:CreateWindow({
                     setclipboard(KeyLink)
                     Rayfield:Notify({
                         Title = "Key System",
-                        Content = "Panda link copied to clipboard!",
+                        Content = "Panda link copied to clipboard! Paste it in your browser.",
                         Duration = 5,
                     })
                 end
