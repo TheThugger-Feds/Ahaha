@@ -4,6 +4,9 @@ local TaxiFarmURL = "https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/mai
 local HWID = game:GetService("RbxAnalyticsService"):GetClientId()
 local KeyLink = "https://new.pandadevelopment.net/getkey/ahahaburg?hwid=" .. HWID
 
+-- This copies the link the SECOND you execute, just in case the button vanishes
+setclipboard(KeyLink)
+
 local Window = Rayfield:CreateWindow({
     Name = "AhahaBurg",
     LoadingTitle = "Authenticating...",
@@ -16,22 +19,18 @@ local Window = Rayfield:CreateWindow({
     KeySystem = true,
     KeySettings = {
         Title = "AhahaBurg | Key System",
-        Subtitle = "Enter the key to continue",
-        Note = "Copy the link and get your key!",
+        Subtitle = "Panda Auth Required",
+        -- FORCING THE LINK INTO THE TEXT BOX HERE:
+        Note = "LINK COPIED! If not, visit: new.pandadevelopment.net/getkey/ahahaburg",
         FileName = "AhahaBurgKey",
         SaveKey = true,
         GrabKeyFromSite = false,
-        Key = {"Ahaha_Success"}, -- Ensure your Panda key matches this
+        Key = {"Ahaha_Success"}, 
         Actions = {
             [1] = {
                 Name = "Copy Key Link",
                 Callback = function()
                     setclipboard(KeyLink)
-                    Rayfield:Notify({
-                        Title = "Link Copied",
-                        Content = "Panda link copied to clipboard!",
-                        Duration = 5
-                    })
                 end
             }
         }
