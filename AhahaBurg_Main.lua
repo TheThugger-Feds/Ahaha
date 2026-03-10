@@ -4,9 +4,6 @@ local TaxiFarmURL = "https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/mai
 local HWID = game:GetService("RbxAnalyticsService"):GetClientId()
 local KeyLink = "https://new.pandadevelopment.net/getkey/ahahaburg?hwid=" .. HWID
 
--- This copies the link the SECOND you execute, just in case the button vanishes
-setclipboard(KeyLink)
-
 local Window = Rayfield:CreateWindow({
     Name = "AhahaBurg",
     LoadingTitle = "Authenticating...",
@@ -20,26 +17,33 @@ local Window = Rayfield:CreateWindow({
     KeySettings = {
         Title = "AhahaBurg | Key System",
         Subtitle = "Panda Auth Required",
-        -- FORCING THE LINK INTO THE TEXT BOX HERE:
-        Note = "LINK COPIED! If not, visit: new.pandadevelopment.net/getkey/ahahaburg",
+        Note = "Copy the link, complete the steps, and paste your key here!",
         FileName = "AhahaBurgKey",
         SaveKey = true,
         GrabKeyFromSite = false,
-        Key = {"Ahaha_Success"}, 
+        -- We use a custom function below to check if the key is valid with Panda
+        Key = {"https://api.pandadevelopment.net/v1/key/verify?service=ahahaburg&hwid=" .. HWID .. "&key="}, 
         Actions = {
             [1] = {
                 Name = "Copy Key Link",
                 Callback = function()
                     setclipboard(KeyLink)
+                    Rayfield:Notify({
+                        Title = "Link Copied",
+                        Content = "Panda link copied to clipboard!",
+                        Duration = 5
+                    })
                 end
             }
         }
     }
 })
 
+--- [[ TABS ]] ---
+
 local FarmTab = Window:CreateTab("Autofarm", 4483362458)
 
-FarmTab:CreateToggle({
+local TaxiToggle = FarmTab:CreateToggle({
     Name = "Enable Taxi Farm",
     CurrentValue = false,
     Flag = "TaxiToggle",
@@ -52,7 +56,7 @@ FarmTab:CreateToggle({
     end
 })
 
-FarmTab:CreateSlider({
+local FarmSpeedSlider = FarmTab:CreateSlider({
     Name = "Farm Speed",
     Range = {16, 100},
     Increment = 1,
