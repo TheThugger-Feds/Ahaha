@@ -4,8 +4,11 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 local TaxiFarmURL = "https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/main/TaxiAutoFarm.lua"
 local AntiAfkURL = "https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/refs/heads/main/Anti-Afk"
 
+-- Panda Auth Configuration
+local PandaAPIKey = "81550b0b-2a1b-41ef-a3ce-c9f662097444"
+local ServiceName = "ahahaburg"
 local HWID = game:GetService("RbxAnalyticsService"):GetClientId()
-local KeyLink = "https://new.pandadevelopment.net/getkey/ahahaburg?hwid=" .. HWID
+local KeyLink = "https://new.pandadevelopment.net/getkey/" .. ServiceName .. "?hwid=" .. HWID
 
 local Window = Rayfield:CreateWindow({
     Name = "AhahaBurg",
@@ -24,14 +27,16 @@ local Window = Rayfield:CreateWindow({
         FileName = "AhahaBurgKey",
         SaveKey = true,
         GrabKeyFromSite = false,
-        -- THIS SECTION HANDLES THE EXTERNAL API CHECK
+        -- THIS HANDLES THE ACTUAL PANDA AUTH VERIFICATION
         Key = function(InputKey)
-            local ApiUrl = "https://api.pandadevelopment.net/v1/key/verify?service=ahahaburg&hwid=" .. HWID .. "&key=" .. InputKey
+            local VerifyURL = "https://api.pandadevelopment.net/v1/key/verify?service=" .. ServiceName .. "&hwid=" .. HWID .. "&key=" .. InputKey
+            
             local Success, Response = pcall(function()
-                return game:HttpGet(ApiUrl)
+                return game:HttpGet(VerifyURL)
             end)
             
-            if Success and Response:find("success") then -- Adjust based on Panda's actual API response string
+            -- Panda usually returns a string containing "success" or "valid" if the key is good
+            if Success and (string.find(Response:lower(), "success") or string.find(Response:lower(), "valid")) then
                 return true
             else
                 return false
@@ -85,9 +90,9 @@ local AntiAFKToggle = FarmTab:CreateToggle({
 
 local FarmSpeedSlider = FarmTab:CreateSlider({
     Name = "Farm Speed",
-    Range = {16, 60},
+    Range = {16, 100},
     Increment = 1,
-    CurrentValue = 30,
+    CurrentValue = 36,
     Flag = "TaxiSpeed",
     Callback = function(Value)
         _G.TaxiFarmSpeed = Value
