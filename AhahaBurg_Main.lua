@@ -22,6 +22,7 @@ _G.IsVerified = false
 _G.TaxiToggle = false
 _G.TaxiFarmSpeed = 36
 _G.AntiAFK = false
+_G.KeyExpiry = nil
 
 local Themes = {"Dark", "Light", "Midnight", "Purple", "Ocean", "Cherry", "Forest", "Sunset"}
 
@@ -68,7 +69,32 @@ local function reportError(context, err)
 end
 
 -- =====================
--- REGISTER JNKIE SERVICE BEFORE CREATEWINDOW
+-- FORMAT EXPIRY
+-- =====================
+local function formatExpiry(expiry)
+    if not expiry or expiry == "" or expiry == "null" then
+        return "✅ Key Status: ∞ No Expiry"
+    end
+    local ts = tonumber(expiry)
+    if ts then
+        local remaining = ts - os.time()
+        if remaining <= 0 then return "❌ Key Status: Expired" end
+        local days = math.floor(remaining / 86400)
+        local hours = math.floor((remaining % 86400) / 3600)
+        local mins = math.floor((remaining % 3600) / 60)
+        if days > 0 then
+            return string.format("✅ Key Status: %dd %dh %dm left", days, hours, mins)
+        elseif hours > 0 then
+            return string.format("✅ Key Status: %dh %dm left", hours, mins)
+        else
+            return string.format("✅ Key Status: %dm left", mins)
+        end
+    end
+    return "✅ Key Status: ∞ No Expiry"
+end
+
+-- =====================
+-- REGISTER JNKIE BEFORE CREATEWINDOW
 -- =====================
 WindUI.Services = WindUI.Services or {}
 WindUI.Services.jnkie = {
@@ -95,6 +121,8 @@ WindUI.Services.jnkie = {
             if res.valid == true or res.message == "KEYLESS" then
                 _G.IsVerified = true
                 getgenv().SCRIPT_KEY = key
+                -- Store expiry globally for settings label
+                _G.KeyExpiry = res.expiry or res.expires_at or res.expires or res.expiration or res.expire or res.exp or nil
                 return true, "Key is valid!"
             else
                 local errMsg = res.error or res.message or "Unknown"
@@ -150,7 +178,7 @@ WindUI.Services.jnkie = {
 }
 
 -- =====================
--- WINDOW — key system now works because jnkie is registered above
+-- WINDOW
 -- =====================
 local Window = WindUI:CreateWindow({
     Title = "AhahaBurg",
@@ -252,6 +280,48 @@ MoodTab:Toggle({
 -- =====================
 -- SETTINGS TAB
 -- =====================
+SettingsTab:Section({ Title = "Key Info" })
+
+-- Key status paragraph — updates after key is verified
+local KeyStatusParagraph = SettingsTab:Paragraph({
+    Title = "Key Status",
+    Desc = "Not verified yet."
+})
+
+-- Live update key status label every minute
+task.spawn(function()
+    while true do
+        task.wait(30)
+        if _G.IsVerified and KeyStatusParagraph then
+            local statusText = formatExpiry(_G.KeyExpiry)
+            pcall(function()
+                if KeyStatusParagraph.Set then
+                    KeyStatusParagraph:Set({ Title = "Key Status", Desc = statusText })
+                elseif KeyStatusParagraph.Update then
+                    KeyStatusParagraph:Update({ Title = "Key Status", Desc = statusText })
+                end
+            end)
+        end
+    end
+end)
+
+-- Update immediately when key is verified
+-- We poll _G.IsVerified since WindUI key system handles the flow
+task.spawn(function()
+    while not _G.IsVerified do
+        task.wait(0.5)
+    end
+    task.wait(0.5) -- small delay for expiry to be stored
+    local statusText = formatExpiry(_G.KeyExpiry)
+    pcall(function()
+        if KeyStatusParagraph.Set then
+            KeyStatusParagraph:Set({ Title = "Key Status", Desc = statusText })
+        elseif KeyStatusParagraph.Update then
+            KeyStatusParagraph:Update({ Title = "Key Status", Desc = statusText })
+        end
+    end)
+end)
+
 SettingsTab:Section({ Title = "Anti AFK" })
 
 SettingsTab:Toggle({
@@ -293,12 +363,15 @@ for _, theme in ipairs(Themes) do
         Title = theme,
         Desc = "Switch UI to " .. theme .. " theme",
         Callback = function()
-            local ok, err = pcall(WindUI.SetTheme, WindUI, theme)
+            -- SetTheme needs the exact registered name
+            local ok, err = pcall(function()
+                WindUI:SetTheme(theme)
+            end)
             if ok then
                 WindUI:Notify({ Title = "🎨 Theme", Content = "Switched to " .. theme, Duration = 3 })
             else
-                warn("[AhahaBurg] SetTheme failed: " .. tostring(err))
-                WindUI:Notify({ Title = "❌ Theme Error", Content = "Could not apply " .. theme .. " theme.", Duration = 4 })
+                warn("[AhahaBurg] SetTheme failed for " .. theme .. ": " .. tostring(err))
+                WindUI:Notify({ Title = "❌ Theme Error", Content = "Could not apply " .. theme, Duration = 4 })
             end
         end
     })
