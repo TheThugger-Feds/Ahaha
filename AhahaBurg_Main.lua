@@ -1,11 +1,6 @@
--- Load WindUI first, store globally so themes file can access it
+-- Load WindUI
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 getgenv().WindUI = WindUI
-
--- Load themes BEFORE CreateWindow
-pcall(function()
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/refs/heads/main/Ui-themes"))()
-end)
 
 -- Load Jnkie SDK
 local Junkie = loadstring(game:HttpGet("https://jnkie.com/sdk/library.lua"))()
@@ -17,14 +12,14 @@ Junkie.provider = "AhahaBurg"
 local TaxiFarmURL = "https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/main/TaxiAutoFarm.lua"
 local AntiAFKURL = "https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/refs/heads/main/Anti-Afk"
 local DiscordWebhook = "https://discord.com/api/webhooks/1485718245410607147/6gRCPAhs6kJMMzg-eiYAoUN_rKqRzpRsU3pawtT8K8WeilLEKapRoplLm2ptvxVrxe08"
+local SavedKeyFile = "AhahaBurg_key.txt"
 
 _G.IsVerified = false
 _G.TaxiToggle = false
 _G.TaxiFarmSpeed = 36
 _G.AntiAFK = false
 _G.KeyExpiry = nil
-
-local Themes = {"Dark", "Light", "Midnight", "Purple", "Ocean", "Cherry", "Forest", "Sunset"}
+_G.KeyStatusText = "Not verified yet."
 
 -- =====================
 -- ERROR REPORTER
@@ -69,28 +64,106 @@ local function reportError(context, err)
 end
 
 -- =====================
+-- KEY SAVE/LOAD (manual, since we handle status ourselves)
+-- =====================
+local function saveKey(key)
+    if writefile then pcall(writefile, SavedKeyFile, key) end
+end
+
+local function clearSavedKey()
+    if writefile then pcall(writefile, SavedKeyFile, "") end
+end
+
+local function loadSavedKey()
+    if readfile and isfile and isfile(SavedKeyFile) then
+        local ok, key = pcall(readfile, SavedKeyFile)
+        if ok and key and #key > 5 then return key end
+    end
+    return nil
+end
+
+-- =====================
 -- FORMAT EXPIRY
 -- =====================
 local function formatExpiry(expiry)
     if not expiry or expiry == "" or expiry == "null" then
-        return "✅ Key Status: ∞ No Expiry"
+        return "✅ Active — ∞ No Expiry"
     end
     local ts = tonumber(expiry)
     if ts then
         local remaining = ts - os.time()
-        if remaining <= 0 then return "❌ Key Status: Expired" end
+        if remaining <= 0 then return "❌ Expired" end
         local days = math.floor(remaining / 86400)
         local hours = math.floor((remaining % 86400) / 3600)
         local mins = math.floor((remaining % 3600) / 60)
         if days > 0 then
-            return string.format("✅ Key Status: %dd %dh %dm left", days, hours, mins)
+            return string.format("✅ Active — %dd %dh %dm left", days, hours, mins)
         elseif hours > 0 then
-            return string.format("✅ Key Status: %dh %dm left", hours, mins)
+            return string.format("✅ Active — %dh %dm left", hours, mins)
         else
-            return string.format("✅ Key Status: %dm left", mins)
+            return string.format("✅ Active — %dm left", mins)
         end
     end
-    return "✅ Key Status: ∞ No Expiry"
+    return "✅ Active — ∞ No Expiry"
+end
+
+-- =====================
+-- CORE KEY VALIDATION
+-- Called both from saved key auto-load and from WindUI key system
+-- =====================
+local function doValidateKey(key)
+    if not key or #key < 5 then
+        return false, "Key too short."
+    end
+
+    local ok, res = pcall(function()
+        return Junkie.check_key(key)
+    end)
+
+    if not ok then
+        reportError("check_key pcall failed", tostring(res))
+        return false, "Something went wrong. Try again."
+    end
+
+    if not res then
+        reportError("check_key nil result", "nil for key: " .. tostring(key))
+        return false, "Something went wrong. Try again."
+    end
+
+    if res.valid == true or res.message == "KEYLESS" then
+        _G.IsVerified = true
+        getgenv().SCRIPT_KEY = key
+        saveKey(key)
+        _G.KeyExpiry = res.expiry or res.expires_at or res.expires or res.expiration or res.expire or res.exp or nil
+        _G.KeyStatusText = formatExpiry(_G.KeyExpiry)
+        return true, "Key is valid!"
+    else
+        local errMsg = res.error or res.message or "Unknown"
+        reportError("check_key rejected", errMsg)
+        if errMsg == "KEY_INVALID" then
+            clearSavedKey()
+            return false, "That key doesn't exist. Copy it again."
+        elseif errMsg == "KEY_EXPIRED" then
+            clearSavedKey()
+            return false, "Your key has expired. Get a new one."
+        elseif errMsg == "HWID_BANNED" then
+            task.delay(2, function()
+                game.Players.LocalPlayer:Kick("Access denied.")
+            end)
+            return false, "You are not allowed to use this script."
+        elseif errMsg == "HWID_MISMATCH" then
+            return false, "This key is linked to a different device."
+        elseif errMsg == "KEY_INVALIDATED" then
+            clearSavedKey()
+            return false, "This key has been disabled. Get a new one."
+        elseif errMsg == "ALREADY_USED" then
+            return false, "This key has already been redeemed."
+        elseif errMsg == "PREMIUM_REQUIRED" then
+            return false, "This key requires a premium subscription."
+        else
+            return false, "Something went wrong. Try again."
+        end
+    end
 end
 
 -- =====================
@@ -102,54 +175,6 @@ WindUI.Services.jnkie = {
     Icon = "key",
     Args = { "ServiceName", "ProviderName" },
     New = function(ServiceName, ProviderName)
-
-        local function validateKey(key)
-            if not key or #key < 5 then
-                return false, "Key too short."
-            end
-            local ok, res = pcall(function()
-                return Junkie.check_key(key)
-            end)
-            if not ok then
-                reportError("check_key pcall failed", tostring(res))
-                return false, "Something went wrong. Try again."
-            end
-            if not res then
-                reportError("check_key nil result", "nil for key: " .. tostring(key))
-                return false, "Something went wrong. Try again."
-            end
-            if res.valid == true or res.message == "KEYLESS" then
-                _G.IsVerified = true
-                getgenv().SCRIPT_KEY = key
-                -- Store expiry globally for settings label
-                _G.KeyExpiry = res.expiry or res.expires_at or res.expires or res.expiration or res.expire or res.exp or nil
-                return true, "Key is valid!"
-            else
-                local errMsg = res.error or res.message or "Unknown"
-                reportError("check_key rejected", errMsg)
-                if errMsg == "KEY_INVALID" then
-                    return false, "That key doesn't exist. Copy it again."
-                elseif errMsg == "KEY_EXPIRED" then
-                    return false, "Your key has expired. Get a new one."
-                elseif errMsg == "HWID_BANNED" then
-                    task.delay(2, function()
-                        game.Players.LocalPlayer:Kick("Access denied.")
-                    end)
-                    return false, "You are not allowed to use this script."
-                elseif errMsg == "HWID_MISMATCH" then
-                    return false, "This key is linked to a different device."
-                elseif errMsg == "KEY_INVALIDATED" then
-                    return false, "This key has been disabled. Get a new one."
-                elseif errMsg == "ALREADY_USED" then
-                    return false, "This key has already been redeemed."
-                elseif errMsg == "PREMIUM_REQUIRED" then
-                    return false, "This key requires a premium subscription."
-                else
-                    return false, "Something went wrong. Try again."
-                end
-            end
-        end
-
         local function copyLink()
             task.spawn(function()
                 local ok, link, err = pcall(Junkie.get_key_link)
@@ -171,7 +196,7 @@ WindUI.Services.jnkie = {
         end
 
         return {
-            Verify = validateKey,
+            Verify = doValidateKey,
             Copy = copyLink,
         }
     end
@@ -190,7 +215,7 @@ local Window = WindUI:CreateWindow({
 
     KeySystem = {
         Note = "Get your key by completing the checkpoints.\nJoin discord: discord.gg/hbJ8y4F3ge",
-        SaveKey = true,
+        SaveKey = false, -- we handle saving manually so we control status
         API = {
             {
                 Title = "AhahaBurg Key",
@@ -282,45 +307,21 @@ MoodTab:Toggle({
 -- =====================
 SettingsTab:Section({ Title = "Key Info" })
 
--- Key status paragraph — updates after key is verified
 local KeyStatusParagraph = SettingsTab:Paragraph({
-    Title = "Key Status",
-    Desc = "Not verified yet."
+    Title = "🔑 Key Status",
+    Desc = "Checking saved key..."
 })
 
--- Live update key status label every minute
-task.spawn(function()
-    while true do
-        task.wait(30)
-        if _G.IsVerified and KeyStatusParagraph then
-            local statusText = formatExpiry(_G.KeyExpiry)
-            pcall(function()
-                if KeyStatusParagraph.Set then
-                    KeyStatusParagraph:Set({ Title = "Key Status", Desc = statusText })
-                elseif KeyStatusParagraph.Update then
-                    KeyStatusParagraph:Update({ Title = "Key Status", Desc = statusText })
-                end
-            end)
-        end
-    end
-end)
-
--- Update immediately when key is verified
--- We poll _G.IsVerified since WindUI key system handles the flow
-task.spawn(function()
-    while not _G.IsVerified do
-        task.wait(0.5)
-    end
-    task.wait(0.5) -- small delay for expiry to be stored
-    local statusText = formatExpiry(_G.KeyExpiry)
+local function updateKeyLabel()
     pcall(function()
+        local text = _G.IsVerified and _G.KeyStatusText or "❌ Not verified."
         if KeyStatusParagraph.Set then
-            KeyStatusParagraph:Set({ Title = "Key Status", Desc = statusText })
+            KeyStatusParagraph:Set({ Title = "🔑 Key Status", Desc = text })
         elseif KeyStatusParagraph.Update then
-            KeyStatusParagraph:Update({ Title = "Key Status", Desc = statusText })
+            KeyStatusParagraph:Update({ Title = "🔑 Key Status", Desc = text })
         end
     end)
-end)
+end
 
 SettingsTab:Section({ Title = "Anti AFK" })
 
@@ -356,27 +357,6 @@ SettingsTab:Toggle({
     end
 })
 
-SettingsTab:Section({ Title = "Themes" })
-
-for _, theme in ipairs(Themes) do
-    SettingsTab:Button({
-        Title = theme,
-        Desc = "Switch UI to " .. theme .. " theme",
-        Callback = function()
-            -- SetTheme needs the exact registered name
-            local ok, err = pcall(function()
-                WindUI:SetTheme(theme)
-            end)
-            if ok then
-                WindUI:Notify({ Title = "🎨 Theme", Content = "Switched to " .. theme, Duration = 3 })
-            else
-                warn("[AhahaBurg] SetTheme failed for " .. theme .. ": " .. tostring(err))
-                WindUI:Notify({ Title = "❌ Theme Error", Content = "Could not apply " .. theme, Duration = 4 })
-            end
-        end
-    })
-end
-
 -- =====================
 -- CREDITS TAB
 -- =====================
@@ -404,3 +384,48 @@ CreditTab:Button({
         WindUI:Notify({ Title = "Copied", Content = "Discord invite copied! Open Discord and paste it.", Duration = 5 })
     end
 })
+
+-- =====================
+-- SAVED KEY AUTO LOAD + STATUS UPDATES
+-- =====================
+task.spawn(function()
+    -- Check for saved key first
+    local saved = loadSavedKey()
+    if saved then
+        WindUI:Notify({ Title = "🔑 Saved Key Found", Content = "Checking your key...", Duration = 4 })
+        local valid, msg = doValidateKey(saved)
+        if valid then
+            WindUI:Notify({ Title = "✅ Key Valid", Content = _G.KeyStatusText, Duration = 5 })
+        else
+            WindUI:Notify({ Title = "❌ Saved Key Failed", Content = msg, Duration = 5 })
+        end
+        updateKeyLabel()
+    else
+        -- No saved key — wait for WindUI key system to verify
+        WindUI:Notify({ Title = "🔑 Key Required", Content = "Please enter your key to continue.", Duration = 5 })
+        updateKeyLabel()
+    end
+
+    -- Live countdown update every 60 seconds
+    while true do
+        task.wait(60)
+        if _G.IsVerified and _G.KeyExpiry then
+            _G.KeyStatusText = formatExpiry(_G.KeyExpiry)
+            updateKeyLabel()
+        end
+    end
+end)
+
+-- Poll for when WindUI key system verifies (covers manual key entry)
+task.spawn(function()
+    local wasVerified = false
+    while true do
+        task.wait(0.5)
+        if _G.IsVerified and not wasVerified then
+            wasVerified = true
+            task.wait(0.3)
+            updateKeyLabel()
+            WindUI:Notify({ Title = "✅ Verified!", Content = _G.KeyStatusText, Duration = 5 })
+        end
+    end
+end)
