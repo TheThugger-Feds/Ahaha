@@ -11,12 +11,9 @@ Junkie.identifier = "1058056"
 Junkie.provider = "AhahaBurg"
 
 -- Load themes from raw
-local ok, err = pcall(function()
+pcall(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/refs/heads/main/Ui-themes"))()
 end)
-if not ok then
-    warn("[AhahaBurg] Failed to load themes: " .. tostring(err))
-end
 
 -- Variables
 local TaxiFarmURL = "https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/main/TaxiAutoFarm.lua"
@@ -92,10 +89,31 @@ local CreditTab = Window:Tab({ Title = "Credits", Icon = "user" })
 -- =====================
 AuthTab:Section({ Title = "Key System" })
 
-local KeyTimerParagraph = AuthTab:Paragraph({
+-- We use a simple Paragraph and update its text via the label directly
+local KeyStatusLabel = AuthTab:Paragraph({
     Title = "Key Status",
     Desc = "Not verified yet."
 })
+
+local function setKeyStatus(title, desc)
+    -- Try multiple WindUI update methods since version may vary
+    if KeyStatusLabel then
+        if KeyStatusLabel.Set then
+            pcall(KeyStatusLabel.Set, KeyStatusLabel, { Title = title, Desc = desc })
+        elseif KeyStatusLabel.Update then
+            pcall(KeyStatusLabel.Update, KeyStatusLabel, { Title = title, Desc = desc })
+        end
+        -- Also try direct label update as fallback
+        pcall(function()
+            if KeyStatusLabel.Instance then
+                local titleLabel = KeyStatusLabel.Instance:FindFirstChild("Title", true)
+                local descLabel = KeyStatusLabel.Instance:FindFirstChild("Desc", true)
+                if titleLabel then titleLabel.Text = title end
+                if descLabel then descLabel.Text = desc end
+            end
+        end)
+    end
+end
 
 AuthTab:Button({
     Title = "1. Get Key Link",
@@ -103,14 +121,14 @@ AuthTab:Button({
     Callback = function()
         task.spawn(function()
             WindUI:Notify({ Title = "Getting link...", Content = "Please wait.", Duration = 3 })
-            local ok, link, err = pcall(function()
-                return Junkie.get_key_link()
-            end)
+            local ok, a, b = pcall(Junkie.get_key_link)
             if not ok then
-                reportError("get_key_link pcall", link)
+                reportError("get_key_link pcall", tostring(a))
                 WindUI:Notify({ Title = "❌ Something went wrong", Content = "Try again in a moment.", Duration = 5 })
                 return
             end
+            -- get_key_link returns: link, err
+            local link, err = a, b
             if link then
                 setclipboard(link)
                 WindUI:Notify({ Title = "✅ Copied!", Content = "Complete the checkpoints then paste your key below.", Duration = 6 })
@@ -125,7 +143,7 @@ AuthTab:Button({
 })
 
 local function formatExpiry(expiry)
-    if not expiry or expiry == "" or expiry == "null" then
+    if not expiry or expiry == "" or expiry == "null" or expiry == nil then
         return "✅ Active — ∞ No Expiry"
     end
     local ts = tonumber(expiry)
@@ -143,7 +161,7 @@ local function formatExpiry(expiry)
             return string.format("✅ Active — %dm left", mins)
         end
     end
-    return "✅ Active — ∞"
+    return "✅ Active — ∞ No Expiry"
 end
 
 local function handleValidKey(key, result)
@@ -151,24 +169,23 @@ local function handleValidKey(key, result)
     getgenv().SCRIPT_KEY = key
     saveKey(key)
 
-    local expiry = result and (result.expiry or result.expires_at or result.expires or result.expiration)
+    -- Log full result so we can see what fields Jnkie actually returns
+    reportError("DEBUG valid result", game:GetService("HttpService"):JSONEncode(result or {}))
+
+    local expiry = result and (
+        result.expiry or result.expires_at or result.expires or
+        result.expiration or result.expire or result.exp
+    )
     local timerText = formatExpiry(expiry)
 
-    KeyTimerParagraph:Set({
-        Title = "🔑 Key Status",
-        Desc = timerText
-    })
+    setKeyStatus("🔑 Key Status", timerText)
 
+    -- Live countdown if expiry exists
     if expiry and tonumber(expiry) then
         task.spawn(function()
             while _G.IsVerified do
-                task.wait(30)
-                if KeyTimerParagraph and KeyTimerParagraph.Set then
-                    KeyTimerParagraph:Set({
-                        Title = "🔑 Key Status",
-                        Desc = formatExpiry(expiry)
-                    })
-                end
+                task.wait(60)
+                setKeyStatus("🔑 Key Status", formatExpiry(expiry))
             end
         end)
     end
@@ -185,35 +202,35 @@ local function validateKey(Text)
     task.spawn(function()
         WindUI:Notify({ Title = "Checking...", Content = "Validating your key.", Duration = 3 })
 
+        -- Run check_key directly in this thread (no nested task.spawn)
+        -- This fixes the timeout bug where done was never being read correctly
         local result = nil
-        local done = false
-
-        task.spawn(function()
-            local ok, res = pcall(function()
-                return Junkie.check_key(Text)
-            end)
-            if ok then result = res
-            else reportError("check_key pcall", tostring(res)) end
-            done = true
+        local ok, res = pcall(function()
+            return Junkie.check_key(Text)
         end)
 
-        local elapsed = 0
-        while not done and elapsed < 10 do
-            task.wait(0.1)
-            elapsed += 0.1
-        end
-
-        if not done then
-            reportError("check_key timeout", "No response after 10s")
-            WindUI:Notify({ Title = "⏳ Taking too long", Content = "Couldn't reach the server. Try again.", Duration = 5 })
+        if ok then
+            result = res
+        else
+            reportError("check_key pcall failed", tostring(res))
+            WindUI:Notify({ Title = "❌ Something went wrong", Content = "Try again in a moment.", Duration = 5 })
             return
         end
 
-        if result and result.valid then
+        if result == nil then
+            reportError("check_key nil result", "returned nil for key: " .. Text)
+            WindUI:Notify({ Title = "❌ Something went wrong", Content = "Try again in a moment.", Duration = 5 })
+            return
+        end
+
+        -- Log raw result for debugging
+        reportError("DEBUG raw result", tostring(result) .. " valid=" .. tostring(result and result.valid) .. " err=" .. tostring(result and result.error))
+
+        if result.valid == true then
             handleValidKey(Text, result)
         else
-            local errMsg = (result and result.error) or "Unknown"
-            reportError("check_key invalid", errMsg)
+            local errMsg = result.error or result.message or "Unknown"
+            reportError("check_key rejected", errMsg)
 
             if errMsg == "KEY_INVALID" then
                 WindUI:Notify({ Title = "❌ Invalid Key", Content = "That key doesn't exist. Make sure you copied it correctly.", Duration = 6 })
@@ -234,6 +251,9 @@ local function validateKey(Text)
                 WindUI:Notify({ Title = "❌ Key Already Used", Content = "This key has already been redeemed.", Duration = 6 })
             elseif errMsg == "PREMIUM_REQUIRED" then
                 WindUI:Notify({ Title = "❌ Premium Required", Content = "This key requires a premium subscription.", Duration = 6 })
+            elseif errMsg == "KEYLESS" then
+                -- Keyless mode counts as valid
+                handleValidKey(Text, result)
             else
                 WindUI:Notify({ Title = "❌ Something went wrong", Content = "Try again in a moment.", Duration = 5 })
             end
