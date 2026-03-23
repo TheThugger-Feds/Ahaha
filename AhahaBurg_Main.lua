@@ -1,8 +1,14 @@
--- Load WindUI
+-- Load WindUI first and store globally BEFORE loading themes
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
-
--- Store WindUI globally so themes file can access it
 getgenv().WindUI = WindUI
+
+-- Load themes BEFORE creating window so they are registered in time
+local themesOk, themesErr = pcall(function()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/refs/heads/main/Ui-themes"))()
+end)
+if not themesOk then
+    warn("[AhahaBurg] Themes failed to load: " .. tostring(themesErr))
+end
 
 -- Load Jnkie SDK
 local Junkie = loadstring(game:HttpGet("https://jnkie.com/sdk/library.lua"))()
@@ -10,40 +16,61 @@ Junkie.service = "AhahaBurg"
 Junkie.identifier = "1058056"
 Junkie.provider = "AhahaBurg"
 
--- Load themes from raw
-pcall(function()
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/refs/heads/main/Ui-themes"))()
-end)
-
 -- Variables
 local TaxiFarmURL = "https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/main/TaxiAutoFarm.lua"
 local AntiAFKURL = "https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/refs/heads/main/Anti-Afk"
 local SavedKeyFile = "AhahaBurg_key.txt"
-local DiscordWebhook = ""
+local DiscordWebhook = "https://discord.com/api/webhooks/1485718245410607147/6gRCPAhs6kJMMzg-eiYAoUN_rKqRzpRsU3pawtT8K8WeilLEKapRoplLm2ptvxVrxe08"
 
 _G.IsVerified = false
 _G.TaxiToggle = false
 _G.TaxiFarmSpeed = 36
 _G.AntiAFK = false
 
-local Themes = {"Dark", "Light", "Purple", "Ocean", "Cherry", "Forest"}
+local Themes = {"Dark", "Light", "Purple", "Ocean", "Cherry", "Forest", "Sunset", "Midnight"}
 
 -- =====================
 -- ERROR REPORTER
 -- =====================
+local REPORT_CONTEXTS = {
+    ["get_key_link pcall"] = true,
+    ["get_key_link response"] = true,
+    ["check_key pcall failed"] = true,
+    ["check_key nil result"] = true,
+    ["check_key rejected"] = true,
+    ["check_key timeout"] = true,
+    ["AntiAFK HttpGet"] = true,
+    ["AntiAFK loadstring"] = true,
+    ["TaxiFarm HttpGet"] = true,
+    ["TaxiFarm loadstring"] = true,
+}
+
 local function reportError(context, err)
-    warn("[AhahaBurg Error] " .. context .. ": " .. tostring(err))
-    if DiscordWebhook and #DiscordWebhook > 10 then
-        task.spawn(function()
-            pcall(function()
-                game:GetService("HttpService"):PostAsync(DiscordWebhook, game:GetService("HttpService"):JSONEncode({
-                    content = "**[AhahaBurg Error]** `" .. context .. "`: " .. tostring(err) ..
-                              "\nPlayer: " .. game.Players.LocalPlayer.Name ..
-                              " | PlaceId: " .. tostring(game.PlaceId)
-                }))
-            end)
+    if context:find("DEBUG") then return end
+    warn("[AhahaBurg] " .. context .. ": " .. tostring(err))
+    if not REPORT_CONTEXTS[context] then return end
+    task.spawn(function()
+        pcall(function()
+            game:GetService("HttpService"):PostAsync(
+                DiscordWebhook,
+                game:GetService("HttpService"):JSONEncode({
+                    embeds = {{
+                        title = "⚠️ AhahaBurg Error",
+                        color = 15158332,
+                        fields = {
+                            { name = "Error", value = "`" .. context .. "`", inline = false },
+                            { name = "Details", value = tostring(err), inline = false },
+                            { name = "Player", value = game.Players.LocalPlayer.Name, inline = true },
+                            { name = "Place ID", value = tostring(game.PlaceId), inline = true },
+                        },
+                        footer = { text = "AhahaBurg Key System" },
+                        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+                    }}
+                }),
+                "application/json"
+            )
         end)
-    end
+    end)
 end
 
 -- =====================
@@ -89,21 +116,18 @@ local CreditTab = Window:Tab({ Title = "Credits", Icon = "user" })
 -- =====================
 AuthTab:Section({ Title = "Key System" })
 
--- We use a simple Paragraph and update its text via the label directly
 local KeyStatusLabel = AuthTab:Paragraph({
     Title = "Key Status",
     Desc = "Not verified yet."
 })
 
 local function setKeyStatus(title, desc)
-    -- Try multiple WindUI update methods since version may vary
     if KeyStatusLabel then
         if KeyStatusLabel.Set then
             pcall(KeyStatusLabel.Set, KeyStatusLabel, { Title = title, Desc = desc })
         elseif KeyStatusLabel.Update then
             pcall(KeyStatusLabel.Update, KeyStatusLabel, { Title = title, Desc = desc })
         end
-        -- Also try direct label update as fallback
         pcall(function()
             if KeyStatusLabel.Instance then
                 local titleLabel = KeyStatusLabel.Instance:FindFirstChild("Title", true)
@@ -127,11 +151,10 @@ AuthTab:Button({
                 WindUI:Notify({ Title = "❌ Something went wrong", Content = "Try again in a moment.", Duration = 5 })
                 return
             end
-            -- get_key_link returns: link, err
             local link, err = a, b
             if link then
                 setclipboard(link)
-                WindUI:Notify({ Title = "✅ Copied!", Content = "Complete the checkpoints then paste your key below.", Duration = 6 })
+                WindUI:Notify({ Title = "✅ Copied!", Content = "Complete checkpoints then paste your key below.", Duration = 6 })
             elseif err == "RATE_LIMITTED" then
                 WindUI:Notify({ Title = "⏳ Slow down!", Content = "Wait 5 minutes before getting a new link.", Duration = 6 })
             else
@@ -143,7 +166,7 @@ AuthTab:Button({
 })
 
 local function formatExpiry(expiry)
-    if not expiry or expiry == "" or expiry == "null" or expiry == nil then
+    if not expiry or expiry == "" or expiry == "null" then
         return "✅ Active — ∞ No Expiry"
     end
     local ts = tonumber(expiry)
@@ -169,18 +192,13 @@ local function handleValidKey(key, result)
     getgenv().SCRIPT_KEY = key
     saveKey(key)
 
-    -- Log full result so we can see what fields Jnkie actually returns
-    reportError("DEBUG valid result", game:GetService("HttpService"):JSONEncode(result or {}))
-
     local expiry = result and (
         result.expiry or result.expires_at or result.expires or
         result.expiration or result.expire or result.exp
     )
     local timerText = formatExpiry(expiry)
-
     setKeyStatus("🔑 Key Status", timerText)
 
-    -- Live countdown if expiry exists
     if expiry and tonumber(expiry) then
         task.spawn(function()
             while _G.IsVerified do
@@ -202,35 +220,31 @@ local function validateKey(Text)
     task.spawn(function()
         WindUI:Notify({ Title = "Checking...", Content = "Validating your key.", Duration = 3 })
 
-        -- Run check_key directly in this thread (no nested task.spawn)
-        -- This fixes the timeout bug where done was never being read correctly
-        local result = nil
         local ok, res = pcall(function()
             return Junkie.check_key(Text)
         end)
 
-        if ok then
-            result = res
-        else
+        if not ok then
             reportError("check_key pcall failed", tostring(res))
             WindUI:Notify({ Title = "❌ Something went wrong", Content = "Try again in a moment.", Duration = 5 })
             return
         end
 
+        local result = res
+
         if result == nil then
-            reportError("check_key nil result", "returned nil for key: " .. Text)
+            reportError("check_key nil result", "nil for key: " .. Text)
             WindUI:Notify({ Title = "❌ Something went wrong", Content = "Try again in a moment.", Duration = 5 })
             return
         end
 
-        -- Log raw result for debugging
-        reportError("DEBUG raw result", tostring(result) .. " valid=" .. tostring(result and result.valid) .. " err=" .. tostring(result and result.error))
-
         if result.valid == true then
+            handleValidKey(Text, result)
+        elseif result.message == "KEYLESS" then
             handleValidKey(Text, result)
         else
             local errMsg = result.error or result.message or "Unknown"
-            reportError("check_key rejected", errMsg)
+            reportError("check_key rejected", errMsg .. " | player: " .. game.Players.LocalPlayer.Name)
 
             if errMsg == "KEY_INVALID" then
                 WindUI:Notify({ Title = "❌ Invalid Key", Content = "That key doesn't exist. Make sure you copied it correctly.", Duration = 6 })
@@ -251,9 +265,6 @@ local function validateKey(Text)
                 WindUI:Notify({ Title = "❌ Key Already Used", Content = "This key has already been redeemed.", Duration = 6 })
             elseif errMsg == "PREMIUM_REQUIRED" then
                 WindUI:Notify({ Title = "❌ Premium Required", Content = "This key requires a premium subscription.", Duration = 6 })
-            elseif errMsg == "KEYLESS" then
-                -- Keyless mode counts as valid
-                handleValidKey(Text, result)
             else
                 WindUI:Notify({ Title = "❌ Something went wrong", Content = "Try again in a moment.", Duration = 5 })
             end
@@ -384,8 +395,13 @@ for _, theme in ipairs(Themes) do
         Title = theme,
         Desc = "Switch UI to " .. theme .. " theme",
         Callback = function()
-            WindUI:SetTheme(theme)
-            WindUI:Notify({ Title = "🎨 Theme", Content = "Switched to " .. theme, Duration = 3 })
+            local ok, err = pcall(WindUI.SetTheme, WindUI, theme)
+            if ok then
+                WindUI:Notify({ Title = "🎨 Theme", Content = "Switched to " .. theme, Duration = 3 })
+            else
+                warn("[AhahaBurg] SetTheme failed for " .. theme .. ": " .. tostring(err))
+                WindUI:Notify({ Title = "❌ Theme Error", Content = "Could not apply " .. theme .. " theme.", Duration = 4 })
+            end
         end
     })
 end
@@ -425,7 +441,7 @@ CreditTab:Button({
     Desc = "Click to copy invite link",
     Callback = function()
         setclipboard("https://discord.gg/hbJ8y4F3ge")
-        WindUI:Notify({ Title = "Copied", Content = "Discord invite link copied! Open Discord and paste it.", Duration = 5 })
+        WindUI:Notify({ Title = "Copied", Content = "Discord invite copied! Open Discord and paste it.", Duration = 5 })
     end
 })
 
