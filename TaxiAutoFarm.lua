@@ -1,7 +1,3 @@
--- AhahaBurg | TaxiAutoFarm.lua v7.5 (Full 7.1 Engine)
--- FIXES v7.1 Integrated: Smart reroute, Close obstacle check, Waypoint cleanup, Wide search
--- UI Integrated: _G.TaxiToggle, _G.TaxiFarmSpeed
-
 local player     = game.Players.LocalPlayer
 local camera     = workspace.CurrentCamera
 local PFS        = game:GetService("PathfindingService")
@@ -15,40 +11,34 @@ local HOVER_STIFFNESS = 50
 local HOVER_DAMPING   = 32
 local MIN_SAFE_Y      = -50
 
+-- CONFIG
 local CFG = {
-    -- DRIVE_SPEED is now dynamic via _G.TaxiFarmSpeed
     HOVER_OFFSET   = 3.2,
     HOVER_SMOOTH   = 0.10,
-
-    WP_REACH       = 6.0,    -- studs to count waypoint as reached
-    LOOK_WP        = 2,      -- lookahead for steering
-
-    -- Primary wall check (far: triggers reroute to plan new route)
+    WP_REACH       = 6.0,
+    LOOK_WP        = 2,
     WALL_DIST      = 8,
     WALL_RECHECK   = 0.6,
-
-    -- Secondary close check (near: triggers immediate reroute before impact)
     CLOSE_DIST     = 3,
     CLOSE_RECHECK  = 0.15,
-
     STUCK_TIME     = 3.0,
     STUCK_VEL      = 2.0,
     STUCK_DIST     = 1.5,
     NUDGE_DUR      = 1.2,
-
     PATH_RETRIES   = 4,
     DRIVE_TIMEOUT  = 40,
     LOOP_INTERVAL  = 1.5,
-
-    -- Entry
-    TAXI_SEARCH_R  = 100,   -- wider search radius
-    TAXI_MIN_DOT   = 0.0,   -- allow full 180° — anything not directly behind
+    TAXI_SEARCH_R  = 100,
+    TAXI_MIN_DOT   = 0.0,
+    TOGGLE_COOLDOWN = 5.0,
 }
 
---------------------------------------------------------------------------------
--- PHYSICS
---------------------------------------------------------------------------------
+-- TOGGLE STATE
+local lastToggleTime = 0
+local farmActive     = false
+local farmThread     = nil
 
+-- PHYSICS
 local function initPhysics(vehicle)
     if not vehicle or not vehicle.PrimaryPart then return nil end
     local p = vehicle.PrimaryPart
@@ -75,24 +65,30 @@ local function initPhysics(vehicle)
     return lv
 end
 
---------------------------------------------------------------------------------
--- GROUND / HOVER
---------------------------------------------------------------------------------
+local function cleanupPhysics(p)
+    if not p then return end
+    for _, n in ipairs({"TaxiLV", "TaxiBG", "TaxiAtt"}) do
+        local obj = p:FindFirstChild(n)
+        if obj then obj:Destroy() end
+    end
+end
 
+-- GROUND / HOVER
 local function sampleGround(p, vehicle)
     local offsets = {
-        Vector3.new(0,0,0),  Vector3.new(3,0,4),  Vector3.new(-3,0,4),
-        Vector3.new(3,0,-4), Vector3.new(-3,0,-4),
+        Vector3.new(0,0,0),   Vector3.new(3,0,4),
+        Vector3.new(-3,0,4),  Vector3.new(3,0,-4),
+        Vector3.new(-3,0,-4),
     }
     local params = RaycastParams.new()
     params.FilterDescendantsInstances = {vehicle, player.Character}
     params.FilterType = Enum.RaycastFilterType.Exclude
     local total, count = 0, 0
     for _, o in ipairs(offsets) do
-        local r = workspace:Raycast(p.Position + Vector3.new(o.X,1.5,o.Z), Vector3.new(0,-16,0), params)
+        local r = workspace:Raycast(p.Position + Vector3.new(o.X, 1.5, o.Z), Vector3.new(0, -16, 0), params)
         if r then total = total + r.Position.Y; count = count + 1 end
     end
-    return count > 0 and (total/count) or nil
+    return count > 0 and (total / count) or nil
 end
 
 local smoothV = 0
@@ -101,25 +97,21 @@ local function hoverVel(p, vehicle)
     local g = sampleGround(p, vehicle)
     local raw = -4
     if g then
-        local err = (g + CFG.HOVER_OFFSET) - p.Position.Y
+        local err      = (g + CFG.HOVER_OFFSET) - p.Position.Y
         local airborne = err < -3.5
-        local ks = airborne and HOVER_STIFFNESS*2 or HOVER_STIFFNESS
-        local kd = airborne and HOVER_DAMPING*1.6 or HOVER_DAMPING
-        raw = math.clamp(err*ks - p.AssemblyLinearVelocity.Y*kd, -35, 35)
+        local ks       = airborne and HOVER_STIFFNESS * 2 or HOVER_STIFFNESS
+        local kd       = airborne and HOVER_DAMPING * 1.6 or HOVER_DAMPING
+        raw = math.clamp(err * ks - p.AssemblyLinearVelocity.Y * kd, -35, 35)
     end
     smoothV = smoothV + (raw - smoothV) * CFG.HOVER_SMOOTH
     return smoothV
 end
 
---------------------------------------------------------------------------------
--- SWEEPING FAN SCANNER
---------------------------------------------------------------------------------
-
-local scanAngle = 0   
+-- OBSTACLE SCANNING
+local scanAngle = 0
 
 local function fanScan(p, vehicle, faceDir, maxDist)
     if faceDir.Magnitude < 0.01 then return nil, nil end
-
     local params = RaycastParams.new()
     params.FilterDescendantsInstances = {vehicle, player.Character}
     params.FilterType = Enum.RaycastFilterType.Exclude
@@ -128,22 +120,19 @@ local function fanScan(p, vehicle, faceDir, maxDist)
     local right  = Vector3.new(faceDir.Z, 0, -faceDir.X)
     local fwd    = faceDir.Unit
 
-    scanAngle = (scanAngle + 8) % 82   
-    local halfAngle = math.min(scanAngle, 80 - scanAngle) * 0.5 + 2  
+    scanAngle = (scanAngle + 8) % 82
+    local halfAngle = math.min(scanAngle, 80 - scanAngle) * 0.5 + 2
 
-    local lRad   = math.rad(halfAngle)
-    local leftDir = (fwd * math.cos(lRad) - right * math.sin(lRad)).Unit
-
-    local rRad    = math.rad(-halfAngle)
+    local lRad     = math.rad(halfAngle)
+    local leftDir  = (fwd * math.cos(lRad) - right * math.sin(lRad)).Unit
+    local rRad     = math.rad(-halfAngle)
     local rightDir = (fwd * math.cos(rRad) - right * math.sin(rRad)).Unit
 
     local hitC = workspace:Raycast(origin, fwd      * maxDist, params)
     local hitL = workspace:Raycast(origin, leftDir  * maxDist, params)
     local hitR = workspace:Raycast(origin, rightDir * maxDist, params)
 
-    local minDist = nil
-    local hitSide = nil
-
+    local minDist, hitSide = nil, nil
     if hitC then minDist = hitC.Distance; hitSide = "centre" end
     if hitL and (not minDist or hitL.Distance < minDist) then minDist = hitL.Distance; hitSide = "left" end
     if hitR and (not minDist or hitR.Distance < minDist) then minDist = hitR.Distance; hitSide = "right" end
@@ -171,24 +160,21 @@ local function closeObstacleAhead(p, vehicle, faceDir, dist)
     return false
 end
 
---------------------------------------------------------------------------------
--- OPEN SIDE FINDER
---------------------------------------------------------------------------------
-
+-- OPEN SIDE FINDER (improved: more directions, better scoring)
 local function findOpenStartPos(p, vehicle, goalPos, minClearance)
     minClearance = minClearance or 6
     local params = RaycastParams.new()
     params.FilterDescendantsInstances = {vehicle, player.Character}
     params.FilterType = Enum.RaycastFilterType.Exclude
 
-    local toGoal  = goalPos and Vector3.new(goalPos.X-p.Position.X, 0, goalPos.Z-p.Position.Z) or nil
-    local goalDir = (toGoal and toGoal.Magnitude > 1) and toGoal.Unit or Vector3.new(0,0,-1)
+    local toGoal  = goalPos and Vector3.new(goalPos.X - p.Position.X, 0, goalPos.Z - p.Position.Z) or nil
+    local goalDir = (toGoal and toGoal.Magnitude > 1) and toGoal.Unit or Vector3.new(0, 0, -1)
 
-    local bestDir   = nil
-    local bestScore = -math.huge
+    local bestDir, bestScore = nil, -math.huge
 
-    for i = 0, 15 do
-        local rad       = math.rad(i * 22.5)
+    -- 24 directions for finer coverage
+    for i = 0, 23 do
+        local rad       = math.rad(i * 15)
         local dir       = Vector3.new(math.sin(rad), 0, math.cos(rad))
         local origin    = p.Position + Vector3.new(0, 1.2, 0)
         local hit       = workspace:Raycast(origin, dir * 32, params)
@@ -200,7 +186,8 @@ local function findOpenStartPos(p, vehicle, goalPos, minClearance)
 
         if clearDist >= minClearance then
             local goalDot = dir:Dot(goalDir)
-            local score   = clearDist + goalDot * 12  
+            -- penalise going backwards heavily
+            local score = clearDist + goalDot * 18
             if score > bestScore then
                 bestScore = score
                 bestDir   = dir
@@ -213,25 +200,20 @@ local function findOpenStartPos(p, vehicle, goalPos, minClearance)
         return p.Position + perp * 4
     end
 
-    local hit2    = workspace:Raycast(p.Position + Vector3.new(0,1.2,0), bestDir*32, params)
+    local hit2    = workspace:Raycast(p.Position + Vector3.new(0, 1.2, 0), bestDir * 32, params)
     local maxStep = (hit2 and hit2.Normal.Y <= 0.7) and hit2.Distance * 0.6 or 10
     return p.Position + bestDir * math.min(maxStep, 10)
 end
 
---------------------------------------------------------------------------------
 -- WAYPOINT CLEANUP
---------------------------------------------------------------------------------
-
 local function cleanWaypoints(pts)
     if #pts < 2 then return pts end
 
-    local deduped = { pts[1] }
+    local deduped = {pts[1]}
     for i = 2, #pts do
-        local prev = deduped[#deduped]
+        local prev   = deduped[#deduped]
         local xzDist = Vector3.new(pts[i].X - prev.X, 0, pts[i].Z - prev.Z).Magnitude
-        if xzDist > 1.5 then
-            table.insert(deduped, pts[i])
-        end
+        if xzDist > 1.5 then table.insert(deduped, pts[i]) end
     end
 
     local changed = true
@@ -240,7 +222,7 @@ local function cleanWaypoints(pts)
     while changed and passes < 6 do
         changed = false
         passes  = passes + 1
-        local out = { cleaned[1] }
+        local out = {cleaned[1]}
         local i   = 2
         while i <= #cleaned do
             local prev = out[#out]
@@ -250,10 +232,9 @@ local function cleanWaypoints(pts)
                 local d1 = Vector3.new(curr.X - prev.X, 0, curr.Z - prev.Z)
                 local d2 = Vector3.new(next.X - curr.X, 0, next.Z - curr.Z)
                 if d1.Magnitude > 0.5 and d2.Magnitude > 0.5 then
-                    local dot = (d1.Unit):Dot(d2.Unit)
-                    if dot < -0.3 then
+                    if (d1.Unit):Dot(d2.Unit) < -0.3 then
                         changed = true
-                        i = i + 1  
+                        i = i + 1
                         continue
                     end
                 end
@@ -271,10 +252,7 @@ local function cleanWaypoints(pts)
     return cleaned
 end
 
---------------------------------------------------------------------------------
 -- STUCK DETECTION
---------------------------------------------------------------------------------
-
 local function makeStuck(p)
     local lastPos = p.Position
     local timer   = 0
@@ -282,7 +260,7 @@ local function makeStuck(p)
 
     local function update(dt)
         if nudging then return false, nil end
-        local hv   = Vector3.new(p.AssemblyLinearVelocity.X,0,p.AssemblyLinearVelocity.Z).Magnitude
+        local hv   = Vector3.new(p.AssemblyLinearVelocity.X, 0, p.AssemblyLinearVelocity.Z).Magnitude
         local dist = (p.Position - lastPos).Magnitude
         if hv < CFG.STUCK_VEL and dist < CFG.STUCK_DIST then
             timer = timer + dt
@@ -291,15 +269,15 @@ local function makeStuck(p)
         end
         if timer >= CFG.STUCK_TIME then
             timer = 0; lastPos = p.Position
-            local best, bestD = Vector3.new(0,0,1), 0
+            local best, bestD = Vector3.new(0, 0, 1), 0
             local rp = RaycastParams.new()
             rp.FilterDescendantsInstances = {player.Character}
             rp.FilterType = Enum.RaycastFilterType.Exclude
             for a = 0, 315, 45 do
-                local d = Vector3.new(math.sin(math.rad(a)),0,math.cos(math.rad(a)))
-                local h = workspace:Raycast(p.Position, d*22, rp)
+                local d  = Vector3.new(math.sin(math.rad(a)), 0, math.cos(math.rad(a)))
+                local h  = workspace:Raycast(p.Position, d * 22, rp)
                 local cd = h and h.Distance or 22
-                if cd > bestD then bestD=cd; best=d end
+                if cd > bestD then bestD = cd; best = d end
             end
             nudging = true
             return true, best
@@ -310,58 +288,56 @@ local function makeStuck(p)
     return update, function(v) nudging = v end
 end
 
---------------------------------------------------------------------------------
--- PATH COMPUTE
---------------------------------------------------------------------------------
-
+-- PATH COMPUTE (improved: tries offset goal positions on failure)
 local function computeWaypoints(fromPos, toPos)
     local jitter = {
-        Vector3.new(0,-1.8,0),  Vector3.new(3,-1.8,0),
-        Vector3.new(-3,-1.8,0), Vector3.new(0,-1.8,3),
+        Vector3.new(0, -1.8, 0),
+        Vector3.new(3, -1.8, 0),
+        Vector3.new(-3, -1.8, 0),
+        Vector3.new(0, -1.8, 3),
+        Vector3.new(0, -1.8, -3),
+        Vector3.new(5, -1.8, 5),
+        Vector3.new(-5, -1.8, -5),
     }
-    for i = 1, CFG.PATH_RETRIES do
-        local path = PFS:CreatePath({AgentRadius=10, AgentCanJump=false})
-        local ok, err = pcall(function()
-            path:ComputeAsync(fromPos, toPos + (jitter[i] or Vector3.new()))
-        end)
-        if ok and path.Status == Enum.PathStatus.Success then
-            local pts = {}
-            for _, w in ipairs(path:GetWaypoints()) do
-                table.insert(pts, w.Position)
+
+    local agentSizes = {
+        {AgentRadius = 10, AgentCanJump = false},
+        {AgentRadius = 6,  AgentCanJump = false},
+        {AgentRadius = 4,  AgentCanJump = false},
+    }
+
+    for _, agentCfg in ipairs(agentSizes) do
+        for i = 1, math.min(CFG.PATH_RETRIES, #jitter) do
+            local path   = PFS:CreatePath(agentCfg)
+            local target = toPos + (jitter[i] or Vector3.new())
+            local ok, _  = pcall(function()
+                path:ComputeAsync(fromPos, target)
+            end)
+            if ok and path.Status == Enum.PathStatus.Success then
+                local pts = {}
+                for _, w in ipairs(path:GetWaypoints()) do
+                    table.insert(pts, w.Position)
+                end
+                pts = cleanWaypoints(pts)
+                if #pts >= 2 then return pts end
             end
-            pts = cleanWaypoints(pts)
-            return pts
+            task.wait(0.15)
         end
-        task.wait(0.2)
     end
     return nil
 end
 
-local function waypointKey(wps)
-    if not wps or #wps == 0 then return "" end
-    local function snap(v) return math.floor(v/4)*4 end
-    local function fmt(w)  return snap(w.X)..","..snap(w.Z) end
-    local mid = wps[math.ceil(#wps/2)]
-    return fmt(wps[1]).."|"..fmt(mid).."|"..fmt(wps[#wps])
-end
-
---------------------------------------------------------------------------------
 -- VEHICLE HELPERS
---------------------------------------------------------------------------------
-
 local function getVehicle()
     local char = player.Character; if not char then return nil end
-    local tag = char:FindFirstChild("Vehicle_TruFleet City Taxi"); if not tag then return nil end
-    local m = tag.Parent
+    local tag  = char:FindFirstChild("Vehicle_TruFleet City Taxi"); if not tag then return nil end
+    local m    = tag.Parent
     return (m and m.PrimaryPart) and m or nil
 end
 
 local function isSeated() return getVehicle() ~= nil end
 
---------------------------------------------------------------------------------
 -- TAXI ENTRY
---------------------------------------------------------------------------------
-
 local TAXI_SPAWN = Vector3.new(142, 0, 88)
 local interactUI = player.PlayerGui:WaitForChild("_interactUI", 5)
 local indicator  = interactUI and interactUI:WaitForChild("InteractIndicator", 2)
@@ -387,13 +363,15 @@ local function pressInteract()
     end
 end
 
-local function findTaxiModel(root)
+local function findTaxiModel()
     local env    = workspace:FindFirstChild("Environment")
     local stands = env and env:FindFirstChild("TaxiStands")
     if stands then
         local direct = stands:FindFirstChild("Taxi")
         if direct and direct:IsA("Model") then return direct end
-        for _, v in ipairs(stands:GetChildren()) do if v:IsA("Model") then return v end end
+        for _, v in ipairs(stands:GetChildren()) do
+            if v:IsA("Model") then return v end
+        end
     end
     return nil
 end
@@ -407,85 +385,94 @@ local function tryEnterTaxi()
     hum:MoveTo(TAXI_SPAWN)
     task.wait(2)
 
-    local taxiModel = findTaxiModel(root)
-    if not taxiModel then return end
+    if not findTaxiModel() then return end
 
-    local entryDeadline = tick() + 10
-    while not isSeated() and tick() < entryDeadline do
+    local deadline = tick() + 10
+    while not isSeated() and tick() < deadline do
         pressInteract()
         task.wait(0.1)
     end
 end
 
---------------------------------------------------------------------------------
--- DRIVE CORE (7.1 Logic + UI Hooks)
---------------------------------------------------------------------------------
+-- DRIVE CORE
+local globalRerouteLock = false
+local lastRerouteTime   = 0
+local REROUTE_COOLDOWN  = 2.0
+local MAX_REROUTES      = 8
 
-local globalRerouteLock  = false
-local lastRerouteTime    = 0
-local REROUTE_COOLDOWN   = 2.0   
-local MAX_REROUTES       = 8     
-
-local function drive(vehicle, waypoints, goalPos, onDone, rerouteHistory, rerouteCount)
-    rerouteHistory = rerouteHistory or {}
-    rerouteCount   = rerouteCount   or 0
+local function drive(vehicle, waypoints, goalPos, onDone, rerouteCount)
+    rerouteCount = rerouteCount or 0
 
     local p  = vehicle.PrimaryPart
+    if not p then onDone(); return end
+
     local lv = initPhysics(vehicle)
     if not lv then onDone(); return end
 
-    local bg        = p:FindFirstChild("TaxiBG")
-    local wpIndex   = 1
-    local startTime = tick()
-    local lastWallCheck  = 0
+    local bg            = p:FindFirstChild("TaxiBG")
+    local wpIndex       = 1
+    local startTime     = tick()
+    local lastWallCheck = 0
     local lastCloseCheck = 0
-    local rerouting = false
+    local rerouting     = false
     smoothV = 0
 
     local stuckUpdate, setNudging = makeStuck(p)
-    local nudgeDir, nudgeUntil = nil, 0
+    local nudgeDir, nudgeUntil    = nil, 0
 
-    local function doReroute(reason)
-        if rerouting or globalRerouteLock or tick() - lastRerouteTime < REROUTE_COOLDOWN then return end
+    local function doReroute()
+        if rerouting or globalRerouteLock then return end
+        if tick() - lastRerouteTime < REROUTE_COOLDOWN then return end
         if rerouteCount >= MAX_REROUTES then
-            lv.VectorVelocity = Vector3.new(0,0,0)
+            cleanupPhysics(p)
             globalRerouteLock = false
             onDone(); return
         end
 
-        rerouting = true
-        globalRerouteLock = true
-        lastRerouteTime = tick()
-        lv.VectorVelocity = Vector3.new(0, 0, 0)
+        rerouting           = true
+        globalRerouteLock   = true
+        lastRerouteTime     = tick()
+        lv.VectorVelocity   = Vector3.new(0, 0, 0)
 
         task.spawn(function()
             task.wait(0.3)
-            local openStart = findOpenStartPos(p, vehicle, goalPos, 8)
-            local newWPs = computeWaypoints(openStart, goalPos)
-            
+            -- Try straight line to goal first, then open pos if blocked
+            local newWPs = computeWaypoints(p.Position, goalPos)
+            if not newWPs then
+                local openStart = findOpenStartPos(p, vehicle, goalPos, 8)
+                newWPs = computeWaypoints(openStart, goalPos)
+            end
             globalRerouteLock = false
-            if not newWPs then onDone() else
-                drive(vehicle, newWPs, goalPos, onDone, rerouteHistory, rerouteCount + 1)
+            if not newWPs then
+                cleanupPhysics(p)
+                onDone()
+            else
+                drive(vehicle, newWPs, goalPos, onDone, rerouteCount + 1)
             end
         end)
     end
 
     local conn
     conn = RunService.Heartbeat:Connect(function(dt)
-        -- UI CHECK: If toggle is off, kill physics and disconnect
-        if _G.TaxiToggle == false then
-            if lv then lv.VectorVelocity = Vector3.new(0,0,0) end
-            local parts = {"TaxiLV", "TaxiBG", "TaxiAtt"}
-            for _, n in ipairs(parts) do if p:FindFirstChild(n) then p[n]:Destroy() end end
+        -- Toggle off check with cooldown
+        if not _G.TaxiToggle then
             conn:Disconnect()
+            cleanupPhysics(p)
             onDone()
             return
         end
 
+        -- Timeout / unseated
         if tick() - startTime > CFG.DRIVE_TIMEOUT or not isSeated() then
-            conn:Disconnect(); onDone(); return
+            conn:Disconnect()
+            cleanupPhysics(p)
+            onDone()
+            return
         end
 
+        if rerouting then return end
+
+        -- Advance waypoints
         while wpIndex <= #waypoints do
             local wp = waypoints[wpIndex]
             local d  = Vector3.new(p.Position.X - wp.X, 0, p.Position.Z - wp.Z).Magnitude
@@ -493,66 +480,123 @@ local function drive(vehicle, waypoints, goalPos, onDone, rerouteHistory, rerout
         end
 
         if wpIndex > #waypoints then
-            conn:Disconnect(); onDone(); return
+            conn:Disconnect()
+            cleanupPhysics(p)
+            onDone()
+            return
         end
 
         local targetWP = waypoints[wpIndex]
         local lookWP   = waypoints[math.min(wpIndex + CFG.LOOK_WP, #waypoints)]
-        local faceDir  = (Vector3.new(lookWP.X - p.Position.X, 0, lookWP.Z - p.Position.Z)).Unit
+        local faceDir  = Vector3.new(lookWP.X - p.Position.X, 0, lookWP.Z - p.Position.Z).Unit
 
-        if not rerouting then
-            local now = tick()
-            if now - lastWallCheck > CFG.WALL_RECHECK then
-                lastWallCheck = now
-                if fanScan(p, vehicle, faceDir, CFG.WALL_DIST) then
-                    conn:Disconnect(); doReroute("Fan Hit"); return
-                end
+        -- Wall checks
+        local now = tick()
+        if now - lastWallCheck > CFG.WALL_RECHECK then
+            lastWallCheck = now
+            local wallDist = fanScan(p, vehicle, faceDir, CFG.WALL_DIST)
+            if wallDist and wallDist < CFG.WALL_DIST then
+                conn:Disconnect()
+                doReroute()
+                return
             end
-            if now - lastCloseCheck > CFG.CLOSE_RECHECK then
-                lastCloseCheck = now
-                if closeObstacleAhead(p, vehicle, faceDir, CFG.CLOSE_DIST) then
-                    conn:Disconnect(); doReroute("Close Hit"); return
-                end
+        end
+        if now - lastCloseCheck > CFG.CLOSE_RECHECK then
+            lastCloseCheck = now
+            if closeObstacleAhead(p, vehicle, faceDir, CFG.CLOSE_DIST) then
+                conn:Disconnect()
+                doReroute()
+                return
             end
         end
 
+        -- Stuck
         local isStuck, stuckDir = stuckUpdate(dt)
-        if isStuck then nudgeDir = stuckDir; nudgeUntil = tick() + CFG.NUDGE_DUR end
+        if isStuck then
+            nudgeDir   = stuckDir
+            nudgeUntil = tick() + CFG.NUDGE_DUR
+            setNudging(false)
+        end
 
-        local hDir = (nudgeDir and tick() < nudgeUntil) and nudgeDir or (Vector3.new(targetWP.X - p.Position.X, 0, targetWP.Z - p.Position.Z)).Unit
-        local vv = hoverVel(p, vehicle)
-        
-        -- DYNAMIC SPEED FROM UI
-        local driveSpeed = _G.TaxiFarmSpeed or 36
-        lv.VectorVelocity = Vector3.new(hDir.X * driveSpeed, vv, hDir.Z * driveSpeed)
+        local useNudge = nudgeDir and tick() < nudgeUntil
+        local hDir     = useNudge and nudgeDir or Vector3.new(targetWP.X - p.Position.X, 0, targetWP.Z - p.Position.Z).Unit
+        local vv       = hoverVel(p, vehicle)
+        local speed    = _G.TaxiFarmSpeed or 36
 
-        p.CFrame = p.CFrame:Lerp(CFrame.new(p.Position, p.Position + Vector3.new(hDir.X, 0, hDir.Z)), 0.15)
+        lv.VectorVelocity = Vector3.new(hDir.X * speed, vv, hDir.Z * speed)
+
+        if bg then
+            bg.CFrame = CFrame.new(p.Position, p.Position + Vector3.new(hDir.X, 0, hDir.Z))
+        end
     end)
 end
 
---------------------------------------------------------------------------------
 -- MAIN LOOP
---------------------------------------------------------------------------------
-
 task.spawn(function()
+    local lastToggle     = false
+    local toggleCooldown = 0
+
     while true do
         task.wait(CFG.LOOP_INTERVAL)
-        if _G.TaxiToggle == true then
-            if not isSeated() then
-                tryEnterTaxi()
+
+        local now       = tick()
+        local wantsOn   = _G.TaxiToggle == true
+        local cooldownOk = now - toggleCooldown > CFG.TOGGLE_COOLDOWN
+
+        -- Detect toggle change with cooldown
+        if wantsOn ~= lastToggle then
+            if cooldownOk then
+                lastToggle   = wantsOn
+                toggleCooldown = now
+                farmActive   = wantsOn
             else
-                local vehicle = getVehicle()
-                local zone = workspace:FindFirstChild("TaxiZone")
-                if vehicle and zone then
-                    local goalPos = zone:IsA("Model") and zone:GetPivot().Position or zone.Position
-                    local wps = computeWaypoints(vehicle.Position, goalPos)
-                    if wps then
-                        local done = false
-                        drive(vehicle.Parent, wps, goalPos, function() done = true end)
-                        repeat task.wait(0.5) until done or _G.TaxiToggle == false
-                    end
-                end
+                -- Enforce cooldown: revert toggle state externally
+                _G.TaxiToggle = lastToggle
+                continue
             end
         end
+
+        if not farmActive then continue end
+
+        -- Seated check
+        if not isSeated() then
+            tryEnterTaxi()
+            continue
+        end
+
+        local vehicle = getVehicle()
+        if not vehicle or not vehicle.PrimaryPart then continue end
+
+        -- Find goal
+        local zone = workspace:FindFirstChild("TaxiZone")
+        if not zone then continue end
+
+        local goalPos
+        if zone:IsA("Model") then
+            goalPos = zone:GetPivot().Position
+        elseif zone:IsA("BasePart") then
+            goalPos = zone.Position
+        else
+            continue
+        end
+
+        -- Compute path from PrimaryPart position (fixes line 548 crash)
+        local fromPos = vehicle.PrimaryPart.Position
+        local wps     = computeWaypoints(fromPos, goalPos)
+        if not wps then continue end
+
+        local done = false
+        drive(vehicle, wps, goalPos, function() done = true end, 0)
+
+        -- Wait for drive to finish or toggle off
+        while not done do
+            task.wait(0.3)
+            if not _G.TaxiToggle then
+                done = true
+            end
+        end
+
+        -- Small rest between runs
+        task.wait(1)
     end
 end)
