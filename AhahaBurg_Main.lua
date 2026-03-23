@@ -2,7 +2,7 @@
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 getgenv().WindUI = WindUI
 
--- Load themes BEFORE CreateWindow so they are registered in time
+-- Load themes BEFORE CreateWindow
 pcall(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/refs/heads/main/Ui-themes"))()
 end)
@@ -34,7 +34,6 @@ local REPORT_CONTEXTS = {
     ["check_key pcall failed"] = true,
     ["check_key nil result"] = true,
     ["check_key rejected"] = true,
-    ["check_key timeout"] = true,
     ["AntiAFK HttpGet"] = true,
     ["AntiAFK loadstring"] = true,
     ["TaxiFarm HttpGet"] = true,
@@ -42,7 +41,6 @@ local REPORT_CONTEXTS = {
 }
 
 local function reportError(context, err)
-    if tostring(context):find("DEBUG") then return end
     warn("[AhahaBurg] " .. context .. ": " .. tostring(err))
     if not REPORT_CONTEXTS[context] then return end
     task.spawn(function()
@@ -70,48 +68,19 @@ local function reportError(context, err)
 end
 
 -- =====================
--- WINDOW with built-in key system
--- SaveKey = true handles save/load automatically
+-- REGISTER JNKIE SERVICE BEFORE CREATEWINDOW
 -- =====================
-local Window = WindUI:CreateWindow({
-    Title = "AhahaBurg",
-    Icon = "shield-check",
-    Author = "by ahaha8686",
-    Size = UDim2.fromOffset(480, 480),
-    Transparent = true,
-    Theme = "Dark",
-
-    KeySystem = {
-        Note = "Get your key by completing the checkpoints.\nJoin discord: discord.gg/hbJ8y4F3ge",
-        SaveKey = true, -- WindUI handles saving and auto-loading the key
-
-        API = {
-            {
-                Title = "AhahaBurg Key",
-                Desc = "Click Copy to get your key link",
-                Icon = "key",
-                Type = "jnkie",
-                ServiceName = "AhahaBurg",
-                ProviderName = "AhahaBurg",
-            },
-        },
-    },
-})
-
--- Register Jnkie as a custom WindUI key service
--- This must be done before CreateWindow but WindUI processes KeySystem after,
--- so we register it right after window creation too
 WindUI.Services = WindUI.Services or {}
 WindUI.Services.jnkie = {
     Name = "Jnkie",
     Icon = "key",
     Args = { "ServiceName", "ProviderName" },
     New = function(ServiceName, ProviderName)
+
         local function validateKey(key)
             if not key or #key < 5 then
-                return false, "Key too short"
+                return false, "Key too short."
             end
-            -- Run Jnkie check
             local ok, res = pcall(function()
                 return Junkie.check_key(key)
             end)
@@ -120,7 +89,7 @@ WindUI.Services.jnkie = {
                 return false, "Something went wrong. Try again."
             end
             if not res then
-                reportError("check_key nil result", "nil for key: " .. key)
+                reportError("check_key nil result", "nil for key: " .. tostring(key))
                 return false, "Something went wrong. Try again."
             end
             if res.valid == true or res.message == "KEYLESS" then
@@ -130,7 +99,6 @@ WindUI.Services.jnkie = {
             else
                 local errMsg = res.error or res.message or "Unknown"
                 reportError("check_key rejected", errMsg)
-                -- User friendly messages
                 if errMsg == "KEY_INVALID" then
                     return false, "That key doesn't exist. Copy it again."
                 elseif errMsg == "KEY_EXPIRED" then
@@ -159,14 +127,17 @@ WindUI.Services.jnkie = {
                 local ok, link, err = pcall(Junkie.get_key_link)
                 if not ok then
                     reportError("get_key_link pcall", tostring(link))
+                    WindUI:Notify({ Title = "❌ Something went wrong", Content = "Try again in a moment.", Duration = 5 })
                     return
                 end
                 if link then
                     setclipboard(link)
+                    WindUI:Notify({ Title = "✅ Copied!", Content = "Complete checkpoints then paste your key.", Duration = 6 })
                 elseif err == "RATE_LIMITTED" then
                     WindUI:Notify({ Title = "⏳ Slow down!", Content = "Wait 5 minutes before getting a new link.", Duration = 6 })
                 else
                     reportError("get_key_link response", tostring(err))
+                    WindUI:Notify({ Title = "❌ Something went wrong", Content = "Try again in a moment.", Duration = 5 })
                 end
             end)
         end
@@ -178,7 +149,34 @@ WindUI.Services.jnkie = {
     end
 }
 
--- Tabs (no Verify tab needed — WindUI key system handles it)
+-- =====================
+-- WINDOW — key system now works because jnkie is registered above
+-- =====================
+local Window = WindUI:CreateWindow({
+    Title = "AhahaBurg",
+    Icon = "shield-check",
+    Author = "by ahaha8686",
+    Size = UDim2.fromOffset(480, 480),
+    Transparent = true,
+    Theme = "Dark",
+
+    KeySystem = {
+        Note = "Get your key by completing the checkpoints.\nJoin discord: discord.gg/hbJ8y4F3ge",
+        SaveKey = true,
+        API = {
+            {
+                Title = "AhahaBurg Key",
+                Desc = "Click Copy to get your key link",
+                Icon = "key",
+                Type = "jnkie",
+                ServiceName = "AhahaBurg",
+                ProviderName = "AhahaBurg",
+            },
+        },
+    },
+})
+
+-- Tabs
 local FarmTab = Window:Tab({ Title = "Autofarm", Icon = "truck" })
 local MoodTab = Window:Tab({ Title = "Auto Mood", Icon = "smile" })
 local SettingsTab = Window:Tab({ Title = "Settings", Icon = "settings" })
