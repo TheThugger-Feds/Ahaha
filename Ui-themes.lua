@@ -24,6 +24,17 @@ WindUI:AddTheme({
 })
 
 WindUI:AddTheme({
+    Name = "Midnight",
+    Accent = Color3.fromHex("#0f0f1a"),
+    Background = Color3.fromHex("#080810"),
+    Outline = Color3.fromHex("#1e1e3a"),
+    Text = Color3.fromHex("#e2e8f0"),
+    Placeholder = Color3.fromHex("#4a5568"),
+    Button = Color3.fromHex("#2d2d5a"),
+    Icon = Color3.fromHex("#818cf8"),
+})
+
+WindUI:AddTheme({
     Name = "Purple",
     Accent = Color3.fromHex("#1e1b2e"),
     Background = Color3.fromHex("#13111f"),
@@ -78,15 +89,4 @@ WindUI:AddTheme({
     Icon = Color3.fromHex("#fb923c"),
 })
 
-WindUI:AddTheme({
-    Name = "Midnight",
-    Accent = Color3.fromHex("#0f0f1a"),
-    Background = Color3.fromHex("#080810"),
-    Outline = Color3.fromHex("#1e1e3a"),
-    Text = Color3.fromHex("#e2e8f0"),
-    Placeholder = Color3.fromHex("#4a5568"),
-    Button = Color3.fromHex("#2d2d5a"),
-    Icon = Color3.fromHex("#818cf8"),
-})
-
-print("[AhahaBurg] Themes loaded successfully")
+print("[AhahaBurg] Themes loaded: Dark, Light, Midnight, Purple, Ocean, Cherry, Forest, Sunset")
