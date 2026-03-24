@@ -14,10 +14,10 @@ local CFG = {
     HOVER_SMOOTH      = 0.10,
     WP_REACH          = 5.0,
     LOOK_WP           = 2,
-    WALL_DIST         = 8,
-    WALL_RECHECK      = 0.5,
-    CLOSE_DIST        = 3,
-    CLOSE_RECHECK     = 0.06,
+    WALL_DIST         = 10,
+    WALL_RECHECK      = 0.6,
+    CLOSE_DIST        = 4,
+    CLOSE_RECHECK     = 0.08,
     STUCK_TIME        = 3.0,
     STUCK_VEL         = 2.0,
     STUCK_DIST        = 1.5,
@@ -27,27 +27,30 @@ local CFG = {
     LOOP_INTERVAL     = 1.0,
     TOGGLE_COOLDOWN   = 5.0,
     ORIENT_TWEEN_TIME = 0.18,
-    SWEEP_INTERVAL    = 0.04,
-    SWEEP_COUNT       = 6,
-    SWEEP_HALF_ARC    = 55,
-    SWEEP_RANGE       = 9,
-    DCLICK_WINDOW     = 0.22,
-    FLOOR_NORMAL_Y    = 0.65,
+    SWEEP_INTERVAL    = 0.05,
+    SWEEP_COUNT       = 5,
+    SWEEP_HALF_ARC    = 45,
+    SWEEP_RANGE       = 7,
+    SWEEP_RAY_HEIGHT  = 2.2,
+    SWEEP_MIN_HITS    = 2,
+    CLOSE_MIN_HITS    = 2,
+    DCLICK_WINDOW     = 0.25,
+    FLOOR_NORMAL_Y    = 0.60,
 }
 
 local farmActive = false
 local globalRerouteLock = false
 local lastRerouteTime = 0
-local REROUTE_COOLDOWN = 2.0
+local REROUTE_COOLDOWN = 2.5
 local MAX_REROUTES = 8
 
 local function syncCFG()
-    if _G.TaxiHoverOffset   then CFG.HOVER_OFFSET    = _G.TaxiHoverOffset   end
-    if _G.TaxiStuckTime     then CFG.STUCK_TIME       = _G.TaxiStuckTime     end
-    if _G.TaxiStuckVel      then CFG.STUCK_VEL        = _G.TaxiStuckVel      end
-    if _G.TaxiDriveTimeout  then CFG.DRIVE_TIMEOUT    = _G.TaxiDriveTimeout  end
-    if _G.TaxiSweepInterval then CFG.SWEEP_INTERVAL   = _G.TaxiSweepInterval end
-    if _G.TaxiSweepRange    then CFG.SWEEP_RANGE      = _G.TaxiSweepRange    end
+    if _G.TaxiHoverOffset   then CFG.HOVER_OFFSET  = _G.TaxiHoverOffset   end
+    if _G.TaxiStuckTime     then CFG.STUCK_TIME     = _G.TaxiStuckTime     end
+    if _G.TaxiStuckVel      then CFG.STUCK_VEL      = _G.TaxiStuckVel      end
+    if _G.TaxiDriveTimeout  then CFG.DRIVE_TIMEOUT  = _G.TaxiDriveTimeout  end
+    if _G.TaxiSweepInterval then CFG.SWEEP_INTERVAL = _G.TaxiSweepInterval end
+    if _G.TaxiSweepRange    then CFG.SWEEP_RANGE    = _G.TaxiSweepRange    end
 end
 
 local function isFloorHit(result)
@@ -132,50 +135,65 @@ local function tweenOrientation(p, bg, targetDir)
     currentOrientTween:Play()
 end
 
+-- Dual sweep: requires SWEEP_MIN_HITS rays blocked in the same arc side to count as a real obstacle.
+-- Thin poles on the edge will only hit 1 ray and won't trigger. A real wall hits multiple.
 local lastSweepTime = 0
 local function dualSweepScan(p, vehicle, faceDir, maxDist)
-    if faceDir.Magnitude < 0.01 then return nil, nil end
+    if faceDir.Magnitude < 0.01 then return false end
     local now = tick()
-    if now - lastSweepTime < CFG.SWEEP_INTERVAL then return nil, nil end
+    if now - lastSweepTime < CFG.SWEEP_INTERVAL then return false end
     lastSweepTime = now
+
     local params = makeObstacleParams(vehicle)
-    local origin = p.Position + Vector3.new(0, 1.4, 0)
+    local origin = p.Position + Vector3.new(0, CFG.SWEEP_RAY_HEIGHT, 0)
     local fwd = faceDir.Unit
     local right = Vector3.new(fwd.Z, 0, -fwd.X)
-    local minDist, hitSide = nil, nil
+
+    local leftHits, rightHits, centreHits = 0, 0, 0
+
     for i = 0, CFG.SWEEP_COUNT do
         local deg = (i / CFG.SWEEP_COUNT) * CFG.SWEEP_HALF_ARC
+
+        -- left ray
         local radL = math.rad(deg)
         local dirL = (fwd * math.cos(radL) - right * math.sin(radL)).Unit
         local hitL = workspace:Raycast(origin, dirL * maxDist, params)
         if hitL and not isFloorHit(hitL) then
-            if not minDist or hitL.Distance < minDist then
-                minDist = hitL.Distance; hitSide = deg == 0 and "centre" or "left"
-            end
+            if deg < 5 then centreHits = centreHits + 1
+            else leftHits = leftHits + 1 end
         end
-        local radR = math.rad(-deg)
-        local dirR = (fwd * math.cos(radR) - right * math.sin(radR)).Unit
-        local hitR = workspace:Raycast(origin, dirR * maxDist, params)
-        if hitR and not isFloorHit(hitR) then
-            if not minDist or hitR.Distance < minDist then
-                minDist = hitR.Distance; hitSide = "right"
+
+        -- right ray (skip centre duplicate)
+        if deg > 0 then
+            local radR = math.rad(-deg)
+            local dirR = (fwd * math.cos(radR) - right * math.sin(radR)).Unit
+            local hitR = workspace:Raycast(origin, dirR * maxDist, params)
+            if hitR and not isFloorHit(hitR) then
+                rightHits = rightHits + 1
             end
         end
     end
-    return minDist, hitSide
+
+    local minHits = CFG.SWEEP_MIN_HITS
+    return (centreHits >= 1) or (leftHits >= minHits) or (rightHits >= minHits)
 end
 
+-- Close obstacle: also requires CLOSE_MIN_HITS to avoid thin-pole false positives
 local function closeObstacleAhead(p, vehicle, faceDir, dist)
     if faceDir.Magnitude < 0.01 then return false end
     local params = makeObstacleParams(vehicle)
-    local origin = p.Position + Vector3.new(0, 1.4, 0)
+    local origin = p.Position + Vector3.new(0, CFG.SWEEP_RAY_HEIGHT, 0)
     local right = Vector3.new(faceDir.Z, 0, -faceDir.X)
     local fwd = faceDir.Unit
-    for _, deg in ipairs({0, 10, -10, 20, -20}) do
+    local hits = 0
+    for _, deg in ipairs({0, 8, -8, 16, -16, 24, -24}) do
         local rad = math.rad(deg)
         local d = (fwd * math.cos(rad) + right * math.sin(rad)).Unit
         local hit = workspace:Raycast(origin, d * dist, params)
-        if hit and not isFloorHit(hit) then return true end
+        if hit and not isFloorHit(hit) then
+            hits = hits + 1
+            if hits >= CFG.CLOSE_MIN_HITS then return true end
+        end
     end
     return false
 end
@@ -183,13 +201,13 @@ end
 local function findOpenStartPos(p, vehicle, goalPos, minClearance)
     minClearance = minClearance or 6
     local params = makeObstacleParams(vehicle)
-    local toGoal = goalPos and Vector3.new(goalPos.X - p.Position.X, 0, goalPos.Z - p.Position.Z) or nil
+    local toGoal = goalPos and Vector3.new(goalPos.X-p.Position.X, 0, goalPos.Z-p.Position.Z) or nil
     local goalDir = (toGoal and toGoal.Magnitude > 1) and toGoal.Unit or Vector3.new(0,0,-1)
     local bestDir, bestScore = nil, -math.huge
     for i = 0, 23 do
         local rad = math.rad(i * 15)
         local dir = Vector3.new(math.sin(rad), 0, math.cos(rad))
-        local hit = workspace:Raycast(p.Position + Vector3.new(0,1.4,0), dir * 32, params)
+        local hit = workspace:Raycast(p.Position + Vector3.new(0, CFG.SWEEP_RAY_HEIGHT, 0), dir * 32, params)
         local clearDist = (hit and not isFloorHit(hit)) and hit.Distance or 32
         if clearDist >= minClearance then
             local score = clearDist + dir:Dot(goalDir) * 18
@@ -199,7 +217,7 @@ local function findOpenStartPos(p, vehicle, goalPos, minClearance)
     if not bestDir then
         return p.Position + Vector3.new(-goalDir.Z, 0, goalDir.X) * 4
     end
-    local hit2 = workspace:Raycast(p.Position + Vector3.new(0,1.4,0), bestDir * 32, params)
+    local hit2 = workspace:Raycast(p.Position + Vector3.new(0, CFG.SWEEP_RAY_HEIGHT, 0), bestDir * 32, params)
     local maxStep = (hit2 and not isFloorHit(hit2)) and hit2.Distance * 0.6 or 10
     return p.Position + bestDir * math.min(maxStep, 10)
 end
@@ -216,8 +234,7 @@ local function cleanWaypoints(pts)
     local changed, passes, cleaned = true, 0, deduped
     while changed and passes < 6 do
         changed = false; passes = passes + 1
-        local out = {cleaned[1]}
-        local i = 2
+        local out = {cleaned[1]}; local i = 2
         while i <= #cleaned do
             local prev = out[#out]; local curr = cleaned[i]; local next = cleaned[i+1]
             if next then
@@ -264,11 +281,8 @@ local function makeStuck(p)
         if nudging then return false, nil end
         local hv = Vector3.new(p.AssemblyLinearVelocity.X, 0, p.AssemblyLinearVelocity.Z).Magnitude
         local dist = (p.Position - lastPos).Magnitude
-        if hv < CFG.STUCK_VEL and dist < CFG.STUCK_DIST then
-            timer = timer + dt
-        else
-            timer = 0; lastPos = p.Position
-        end
+        if hv < CFG.STUCK_VEL and dist < CFG.STUCK_DIST then timer = timer + dt
+        else timer = 0; lastPos = p.Position end
         if timer >= CFG.STUCK_TIME then
             timer = 0; lastPos = p.Position
             local best, bestD = Vector3.new(0,0,1), 0
@@ -328,18 +342,26 @@ local function isSeated() return getVehicle() ~= nil end
 
 local TAXI_SPAWN = Vector3.new(142, 0, 88)
 
+-- Safe screen-point click: validates Z > 0 (in front of camera) before firing
+local function screenClick(worldPos)
+    local screenPos, onScreen = camera:WorldToScreenPoint(worldPos)
+    if not onScreen or screenPos.Z <= 0 then
+        -- Fallback: try centre of screen
+        local vp = camera.ViewportSize
+        screenPos = Vector3.new(vp.X / 2, vp.Y / 2, 1)
+    end
+    local sx, sy = math.floor(screenPos.X), math.floor(screenPos.Y)
+    VIM:SendMouseButtonEvent(sx, sy, 0, true,  game, 0)
+    task.wait(0.01)
+    VIM:SendMouseButtonEvent(sx, sy, 0, false, game, 0)
+end
+
 local function modelDoubleClick(model)
     if not model or not model.PrimaryPart then return end
-    local sp = camera:WorldToScreenPoint(model.PrimaryPart.Position)
-    local sx, sy = math.floor(sp.X), math.floor(sp.Y)
-    local function click()
-        VIM:SendMouseButtonEvent(sx, sy, 0, true, game, 0)
-        task.wait(0.01)
-        VIM:SendMouseButtonEvent(sx, sy, 0, false, game, 0)
-    end
-    click()
+    local worldPos = model.PrimaryPart.Position
+    screenClick(worldPos)
     task.wait(CFG.DCLICK_WINDOW)
-    click()
+    screenClick(worldPos)
 end
 
 local function findTaxiModel()
@@ -371,13 +393,24 @@ local function tryEnterTaxi()
     if isSeated() then return end
 
     local taxi = findTaxiModel()
-    if not taxi then return end
+    if not taxi or not taxi.PrimaryPart then return end
 
+    -- Stop drifting
     hum:MoveTo(root.Position)
+    task.wait(0.1)
 
-    local deadline = tick() + 10
+    local deadline = tick() + 12
     while not isSeated() and tick() < deadline do
-        if not taxi or not taxi.PrimaryPart then break end
+        if not taxi.PrimaryPart then break end
+
+        -- Make sure taxi is visible from camera before clicking
+        local _, onScreen = camera:WorldToScreenPoint(taxi.PrimaryPart.Position)
+        if not onScreen then
+            -- Look toward taxi so it's in view
+            local dir = (taxi.PrimaryPart.Position - camera.CFrame.Position).Unit
+            camera.CFrame = CFrame.new(camera.CFrame.Position, camera.CFrame.Position + dir)
+        end
+
         modelDoubleClick(taxi)
         task.wait(0.5)
     end
@@ -451,15 +484,16 @@ local function drive(vehicle, waypoints, goalPos, onDone, rerouteCount)
 
         local now = tick()
 
-        local sweepDist = dualSweepScan(p, vehicle, faceDir, CFG.SWEEP_RANGE)
-        if sweepDist and sweepDist < CFG.SWEEP_RANGE then
+        -- Sweep scan (multi-hit required — thin poles won't trigger)
+        if dualSweepScan(p, vehicle, faceDir, CFG.SWEEP_RANGE) then
             conn:Disconnect(); doReroute(); return
         end
 
         if now - lastWallCheck > CFG.WALL_RECHECK then
             lastWallCheck = now
-            local wd = dualSweepScan(p, vehicle, faceDir, CFG.WALL_DIST)
-            if wd and wd < CFG.WALL_DIST then conn:Disconnect(); doReroute(); return end
+            if dualSweepScan(p, vehicle, faceDir, CFG.WALL_DIST) then
+                conn:Disconnect(); doReroute(); return
+            end
         end
 
         if now - lastCloseCheck > CFG.CLOSE_RECHECK then
