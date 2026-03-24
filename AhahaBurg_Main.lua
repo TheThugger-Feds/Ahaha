@@ -1,14 +1,11 @@
--- Load WindUI
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 getgenv().WindUI = WindUI
 
--- Load Jnkie SDK
 local Junkie = loadstring(game:HttpGet("https://jnkie.com/sdk/library.lua"))()
 Junkie.service = "AhahaBurg"
 Junkie.identifier = "1058056"
 Junkie.provider = "AhahaBurg"
 
--- Variables
 local TaxiFarmURL = "https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/main/TaxiAutoFarm.lua"
 local AntiAFKURL = "https://raw.githubusercontent.com/TheThugger-Feds/Ahaha/refs/heads/main/Anti-Afk"
 local DiscordWebhook = "https://discord.com/api/webhooks/1485718245410607147/6gRCPAhs6kJMMzg-eiYAoUN_rKqRzpRsU3pawtT8K8WeilLEKapRoplLm2ptvxVrxe08"
@@ -21,9 +18,13 @@ _G.AntiAFK = false
 _G.KeyExpiry = nil
 _G.KeyStatusText = "Not verified yet."
 
--- =====================
--- ERROR REPORTER
--- =====================
+_G.TaxiHoverOffset = 3.2
+_G.TaxiStuckTime = 3.0
+_G.TaxiStuckVel = 2.0
+_G.TaxiDriveTimeout = 40
+_G.TaxiSweepInterval = 0.04
+_G.TaxiSweepRange = 9
+
 local REPORT_CONTEXTS = {
     ["get_key_link pcall"] = true,
     ["get_key_link response"] = true,
@@ -63,9 +64,6 @@ local function reportError(context, err)
     end)
 end
 
--- =====================
--- KEY SAVE/LOAD (manual, since we handle status ourselves)
--- =====================
 local function saveKey(key)
     if writefile then pcall(writefile, SavedKeyFile, key) end
 end
@@ -82,9 +80,6 @@ local function loadSavedKey()
     return nil
 end
 
--- =====================
--- FORMAT EXPIRY
--- =====================
 local function formatExpiry(expiry)
     if not expiry or expiry == "" or expiry == "null" then
         return "✅ Active — ∞ No Expiry"
@@ -107,10 +102,6 @@ local function formatExpiry(expiry)
     return "✅ Active — ∞ No Expiry"
 end
 
--- =====================
--- CORE KEY VALIDATION
--- Called both from saved key auto-load and from WindUI key system
--- =====================
 local function doValidateKey(key)
     if not key or #key < 5 then
         return false, "Key too short."
@@ -166,9 +157,6 @@ local function doValidateKey(key)
     end
 end
 
--- =====================
--- REGISTER JNKIE BEFORE CREATEWINDOW
--- =====================
 WindUI.Services = WindUI.Services or {}
 WindUI.Services.jnkie = {
     Name = "Jnkie",
@@ -202,20 +190,17 @@ WindUI.Services.jnkie = {
     end
 }
 
--- =====================
--- WINDOW
--- =====================
 local Window = WindUI:CreateWindow({
     Title = "AhahaBurg",
     Icon = "shield-check",
     Author = "by ahaha8686",
-    Size = UDim2.fromOffset(480, 480),
+    Size = UDim2.fromOffset(480, 560),
     Transparent = true,
     Theme = "Dark",
 
     KeySystem = {
         Note = "Get your key by completing the checkpoints.\nJoin discord: discord.gg/hbJ8y4F3ge",
-        SaveKey = false, -- we handle saving manually so we control status
+        SaveKey = false,
         API = {
             {
                 Title = "AhahaBurg Key",
@@ -229,7 +214,6 @@ local Window = WindUI:CreateWindow({
     },
 })
 
--- Tabs
 local FarmTab = Window:Tab({ Title = "Autofarm", Icon = "truck" })
 local MoodTab = Window:Tab({ Title = "Auto Mood", Icon = "smile" })
 local SettingsTab = Window:Tab({ Title = "Settings", Icon = "settings" })
@@ -238,7 +222,7 @@ local CreditTab = Window:Tab({ Title = "Credits", Icon = "user" })
 -- =====================
 -- FARM TAB
 -- =====================
-FarmTab:Section({ Title = "Taxi Autofarm" })
+FarmTab:Section({ Title = "🚕 Taxi Autofarm" })
 
 FarmTab:Toggle({
     Title = "Enable Taxi Farm",
@@ -271,16 +255,83 @@ FarmTab:Toggle({
 })
 
 FarmTab:Slider({
-    Title = "Farm Speed",
+    Title = "Drive Speed",
+    Desc = "How fast the taxi drives (studs/sec)",
     Value = { Min = 16, Max = 100, Default = 36 },
     Callback = function(Value)
         _G.TaxiFarmSpeed = Value
     end
 })
 
+FarmTab:Section({ Title = "⚙️ Taxi Settings" })
+
+FarmTab:Slider({
+    Title = "Hover Height",
+    Desc = "How high the car floats above the ground",
+    Value = { Min = 1, Max = 8, Default = 3 },
+    Callback = function(Value)
+        _G.TaxiHoverOffset = Value + 0.2
+    end
+})
+
+FarmTab:Slider({
+    Title = "Stuck Timer (seconds)",
+    Desc = "How long before the car decides it's stuck and reroutes",
+    Value = { Min = 1, Max = 10, Default = 3 },
+    Callback = function(Value)
+        _G.TaxiStuckTime = Value
+    end
+})
+
+FarmTab:Slider({
+    Title = "Stuck Sensitivity",
+    Desc = "Minimum speed (studs/sec) — lower = detects getting stuck sooner",
+    Value = { Min = 1, Max = 8, Default = 2 },
+    Callback = function(Value)
+        _G.TaxiStuckVel = Value
+    end
+})
+
+FarmTab:Slider({
+    Title = "Drive Timeout (seconds)",
+    Desc = "Max time allowed to reach a destination before giving up",
+    Value = { Min = 15, Max = 120, Default = 40 },
+    Callback = function(Value)
+        _G.TaxiDriveTimeout = Value
+    end
+})
+
+FarmTab:Slider({
+    Title = "Obstacle Scan Range (studs)",
+    Desc = "How far ahead the car scans for obstacles before rerouting",
+    Value = { Min = 4, Max = 20, Default = 9 },
+    Callback = function(Value)
+        _G.TaxiSweepRange = Value
+    end
+})
+
+FarmTab:Slider({
+    Title = "Scan Frequency",
+    Desc = "How often obstacle rays fire — lower = more responsive but heavier",
+    Value = { Min = 1, Max = 10, Default = 4 },
+    Callback = function(Value)
+        _G.TaxiSweepInterval = Value / 100
+    end
+})
+
 FarmTab:Paragraph({
-    Title = "Info",
-    Desc = "Toggle the farm above. Adjust speed to your preference."
+    Title = "ℹ️ Tips",
+    Desc = "Higher speed = less stable pathing. Lower stuck timer = quicker recovery. Keep scan range between 8–12 for best results."
+})
+
+-- =====================
+-- DIVIDER — ADD MORE AUTOFARMS BELOW THIS LINE
+-- =====================
+FarmTab:Section({ Title = "➕ More Autofarms" })
+
+FarmTab:Paragraph({
+    Title = "Coming Soon",
+    Desc = "Additional autofarm modules will appear here. Each farm has its own independent settings above."
 })
 
 -- =====================
@@ -389,7 +440,6 @@ CreditTab:Button({
 -- SAVED KEY AUTO LOAD + STATUS UPDATES
 -- =====================
 task.spawn(function()
-    -- Check for saved key first
     local saved = loadSavedKey()
     if saved then
         WindUI:Notify({ Title = "🔑 Saved Key Found", Content = "Checking your key...", Duration = 4 })
@@ -401,12 +451,10 @@ task.spawn(function()
         end
         updateKeyLabel()
     else
-        -- No saved key — wait for WindUI key system to verify
         WindUI:Notify({ Title = "🔑 Key Required", Content = "Please enter your key to continue.", Duration = 5 })
         updateKeyLabel()
     end
 
-    -- Live countdown update every 60 seconds
     while true do
         task.wait(60)
         if _G.IsVerified and _G.KeyExpiry then
@@ -416,7 +464,6 @@ task.spawn(function()
     end
 end)
 
--- Poll for when WindUI key system verifies (covers manual key entry)
 task.spawn(function()
     local wasVerified = false
     while true do
